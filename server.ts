@@ -4,6 +4,8 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
+import { shadowDB, auditDB, type ShadowRecord } from "./src/lib/db/database.js";
+import { getBaleDispatcher } from "./src/lib/outbox/BaleDispatcher.js";
 
 dotenv.config();
 
@@ -46,6 +48,34 @@ function requireAdminAuth(
 
 // Apply auth guard to all admin routes
 app.use("/api/admin", requireAdminAuth);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PIPELINE / GATEWAY / SYSTEM AUTH MIDDLEWARE — Scope: operator-level access
+// Uses the same PANEL_API_SECRET for simplicity. In production, issue separate
+// scoped tokens per consumer (bale-auto, external clients, etc.)
+// ─────────────────────────────────────────────────────────────────────────────
+function requireOperatorAuth(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const authHeader = req.headers["authorization"] || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token || token !== PANEL_API_SECRET) {
+    return res.status(401).json({ error: "Unauthorized. Valid Bearer token required for pipeline/system access." });
+  }
+  next();
+}
+
+// Protect pipeline, gateway management, and system settings routes
+app.use("/api/pipeline", requireOperatorAuth);
+app.use("/api/gateways", requireOperatorAuth);
+app.use("/api/system", requireOperatorAuth);
+app.use("/api/evolution", requireOperatorAuth);
+app.use("/api/ledger", requireOperatorAuth);
+
+// Bale webhook secret for HMAC verification (optional but recommended)
+const BALE_WEBHOOK_SECRET = process.env.BALE_WEBHOOK_SECRET || "";
 
 // Lazy initialize Gemini client
 function getGenAI() {
@@ -794,37 +824,10 @@ const DRUG_CATALOG: Record<string, { price: number, code: string, requiresPrescr
   "ایبوپروفن": { price: 15500, code: "IRC-88321", requiresPrescription: false },
 };
 
-interface ShadowRecord {
-  id: string;
-  sessionId: string;
-  channel: "whatsapp" | "bale" | "telegram" | "sms";
-  senderDisplay: string;
-  userMessage: string;
-  proposedReply: string;
-  timestamp: string;
-  confidenceScore: number;
-  riskLevel: "safe" | "medium_risk" | "high_redline";
-  status: "pending" | "approved" | "rejected" | "modified";
-  deterministicRuleApplied?: string;
-  auditNote?: string;
-  editedReply?: string;
-}
+// ShadowRecord type is imported from ./src/lib/db/database.ts (shadowDB)
+// shadowQueue is now persisted to SQLite — use shadowDB.insert(), shadowDB.getAll(), etc.
 
-let shadowQueue: ShadowRecord[] = [
-  {
-    id: "sh-901",
-    sessionId: "wa-989123456789",
-    channel: "whatsapp",
-    senderDisplay: "+98 912 345 6789 (سهامدار/همکار)",
-    userMessage: "وضعیت گزارش تجمیعی شاخص‌های Embednet OS و خروجی لاگ چت‌ها آماده شد؟",
-    proposedReply: "سلام و احترام. بله، شاخص‌های آپ‌تایم و صف اعتبارسنجی سایه (Shadow Queue) در پنل استخراج شده و گزارش برای شما ارسال شد.",
-    timestamp: "10 دقیقه پیش",
-    confidenceScore: 0.94,
-    riskLevel: "safe",
-    status: "pending",
-    auditNote: "استعلام مدیریتی داخلی - بدون نیاز به رگولاتوری",
-  }
-];
+
 
 // In-Memory Shared Ledger Items
 let serverLedgerItems = [
@@ -1125,7 +1128,7 @@ function getChannelsWithTelemetry() {
       status: channelStatuses.whatsapp || "active",
       method: "Evolution API v2 / Direct Webhook",
       latencyMs: gatewayTelemetryMap.whatsapp.pingMs,
-      unprocessedQueue: shadowQueue.filter((s) => s.channel === "whatsapp" && s.status === "pending").length,
+      unprocessedQueue: shadowDB.countByChannelAndStatus("whatsapp", "pending"),
       lastHeartbeat: gatewayTelemetryMap.whatsapp.lastPulseAt,
       telemetry: gatewayTelemetryMap.whatsapp,
     },
@@ -1135,7 +1138,7 @@ function getChannelsWithTelemetry() {
       status: channelStatuses.bale || "active",
       method: "Bale Webhook Pipeline (bale-med)",
       latencyMs: gatewayTelemetryMap.bale.pingMs,
-      unprocessedQueue: shadowQueue.filter((s) => s.channel === "bale" && s.status === "pending").length,
+      unprocessedQueue: shadowDB.countByChannelAndStatus("bale", "pending"),
       lastHeartbeat: gatewayTelemetryMap.bale.lastPulseAt,
       telemetry: gatewayTelemetryMap.bale,
     },
@@ -1697,16 +1700,17 @@ app.post("/api/evolution/inbound-message", async (req, res) => {
 
 
 app.get("/api/pipeline/state", (req, res) => {
+  const queue = shadowDB.getAll();
   res.json({
     status: "operational",
-    environment: "Embednet OS Core v4.1 (LangBot Modular Pattern)",
+    environment: "Embednet OS Core v4.2 (LangBot Modular Pattern + SQLite Persistence)",
     privacySettings: globalPrivacySettings,
     pulseConfig: gatewayPulseConfig,
     channels: getChannelsWithTelemetry(),
-    shadowQueue,
+    shadowQueue: queue,
     stats: {
       totalProcessed: 1428,
-      shadowIntercepted: shadowQueue.length,
+      shadowIntercepted: queue.length,
       autoApprovedSafe: 1290,
       rejectedOrRedline: 27,
       ephemeralSessions: globalPrivacySettings.ephemeralSessionsCount,
@@ -1875,7 +1879,14 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
 
   // For bale-auto privacy or pure ephemeral medical sessions, avoid persisting in raw shadow review if scrubbed
   if (!isBaleAutoPersonal) {
-    shadowQueue.unshift(newRecord);
+    try {
+      shadowDB.insert(newRecord);
+    } catch (dbErr: any) {
+      // Duplicate key on retry — ignore
+      if (!String(dbErr?.message).includes("UNIQUE constraint")) {
+        console.error("[shadowDB.insert] error:", dbErr);
+      }
+    }
   }
 
   // If live and approved, dispatch to Outbox
@@ -1899,16 +1910,96 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
   };
 }
 
-// Normalized Outbox Dispatcher (Mocking the real API calls)
-async function dispatchToOutbox(channel: string, targetId: string, message: string) {
-  console.log(`[OUTBOX DISPATCH] -> ${channel.toUpperCase()}`);
-  console.log(`[TARGET]: ${targetId}`);
-  console.log(`[MESSAGE]: ${message}`);
-  
-  // Real implementation would use:
-  // if (channel === 'whatsapp') await fetch('https://evolution-api/message/sendText', ...)
-  // if (channel === 'bale') await fetch('https://tapi.bale.ai/bot{TOKEN}/sendMessage', ...)
-  return true;
+// ─────────────────────────────────────────────────────────────────────────────
+// NORMALIZED OUTBOX DISPATCHER — Real channel routing with BaleDispatcher
+// ─────────────────────────────────────────────────────────────────────────────
+async function dispatchToOutbox(channel: string, targetId: string, message: string): Promise<boolean> {
+  const dispatchId = `dsp-${Date.now()}`;
+  const now = new Date();
+
+  console.log(`[OUTBOX] ${channel.toUpperCase()} -> ${targetId} | ${message.slice(0, 60)}...`);
+
+  let success = false;
+  let errorMsg = "";
+
+  try {
+    if (channel === "bale") {
+      const bale = getBaleDispatcher();
+      if (bale) {
+        // Send typing indicator first (best-effort, no await)
+        bale.sendTyping(targetId).catch(() => {});
+        const result = await bale.sendText(targetId, message);
+        success = result.ok;
+        if (!result.ok) errorMsg = result.error || "Bale dispatch failed";
+      } else {
+        console.warn("[OUTBOX] BALE_BOT_TOKEN not configured — message logged only.");
+        success = false;
+        errorMsg = "BALE_BOT_TOKEN not set";
+      }
+    } else if (channel === "whatsapp") {
+      // Evolution API v2 integration
+      const evolutionBaseUrl = process.env.EVOLUTION_API_URL;
+      const evolutionApiKey = process.env.EVOLUTION_API_KEY;
+      const instanceName = process.env.EVOLUTION_INSTANCE || "embednet-wa-primary";
+      if (evolutionBaseUrl && evolutionApiKey) {
+        const { default: axiosLib } = await import("axios");
+        const resp = await axiosLib.post(
+          `${evolutionBaseUrl}/message/sendText/${instanceName}`,
+          { number: targetId, text: message },
+          { headers: { apikey: evolutionApiKey }, timeout: 10000 }
+        );
+        success = resp.status === 200 || resp.status === 201;
+      } else {
+        console.warn("[OUTBOX] EVOLUTION_API_URL/KEY not configured — WhatsApp dispatch skipped.");
+        success = false;
+        errorMsg = "EVOLUTION_API config missing";
+      }
+    } else if (channel === "telegram") {
+      // Telegram Bot API
+      const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (telegramToken) {
+        const { default: axiosLib } = await import("axios");
+        const resp = await axiosLib.post<any>(
+          `https://api.telegram.org/bot${telegramToken}/sendMessage`,
+          { chat_id: targetId, text: message, parse_mode: "Markdown" },
+          { timeout: 10000 }
+        );
+        success = resp.data?.ok === true;
+      } else {
+        console.warn("[OUTBOX] TELEGRAM_BOT_TOKEN not configured.");
+        success = false;
+        errorMsg = "TELEGRAM_BOT_TOKEN not set";
+      }
+    } else {
+      // SMS or unknown: log only
+      console.log(`[OUTBOX][${channel.toUpperCase()}] Dispatch not implemented. Target: ${targetId}`);
+      success = true; // Treat as no-op success for SMS (handled by external provider)
+    }
+  } catch (err: any) {
+    errorMsg = err?.message || "Dispatch error";
+    console.error(`[OUTBOX ERROR] ${channel}:`, err);
+  }
+
+  // Persist audit event
+  try {
+    auditDB.insert({
+      id: dispatchId,
+      timestamp: now.toISOString(),
+      timeFormatted: now.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      dateFormatted: now.toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+      channelId: channel,
+      channelName: channel === "whatsapp" ? "واتساپ" : channel === "bale" ? "بله" : channel === "telegram" ? "تلگرام" : "پیامک",
+      eventType: "outbox_dispatch",
+      severity: success ? "success" : "warning",
+      summary: success
+        ? `ارسال موفق پیام به ${channel.toUpperCase()} → ${targetId}`
+        : `ارسال ناموفق به ${channel.toUpperCase()}: ${errorMsg}`,
+      details: `Message (${message.length} chars): ${message.slice(0, 100)}`,
+      triggeredBy: "inbound_webhook",
+    });
+  } catch { /* audit logging is best-effort */ }
+
+  return success;
 }
 
 app.post("/api/pipeline/process", async (req, res) => {
@@ -1941,27 +2032,97 @@ app.post("/api/pipeline/process", async (req, res) => {
 
 app.post("/api/pipeline/shadow/action", async (req, res) => {
   const { id, action, editedReply } = req.body;
-  const item = shadowQueue.find(s => s.id === id);
+  const item = shadowDB.getById(id);
   if (!item) {
     return res.status(404).json({ error: "Shadow item not found." });
   }
 
+  let updatedItem = item;
+
   if (action === "approve") {
-    item.status = "approved";
-    item.auditNote = `تایید و به خروجی ${item.channel.toUpperCase()} ارسال شد.`;
-    await dispatchToOutbox(item.channel, item.sessionId.replace(`${item.channel}-`, ''), item.proposedReply);
+    const auditNote = `تایید و به خروجی ${item.channel.toUpperCase()} ارسال شد.`;
+    const chatId = item.sessionId.replace(`${item.channel}-`, "");
+    await dispatchToOutbox(item.channel, chatId, item.proposedReply);
+    updatedItem = shadowDB.updateStatus(id, "approved", auditNote) || item;
   } else if (action === "reject") {
-    item.status = "rejected";
-    item.auditNote = "رد شده توسط مدیر (False Positive)";
+    updatedItem = shadowDB.updateStatus(id, "rejected", "رد شده توسط مدیر (False Positive)") || item;
   } else if (action === "modify") {
-    item.status = "modified";
-    item.editedReply = editedReply;
-    item.auditNote = "ویرایش دستی توسط مدیر و ارسال به مقصد";
-    await dispatchToOutbox(item.channel, item.sessionId.replace(`${item.channel}-`, ''), editedReply);
+    if (!editedReply) {
+      return res.status(400).json({ error: "editedReply is required for modify action." });
+    }
+    const chatId = item.sessionId.replace(`${item.channel}-`, "");
+    await dispatchToOutbox(item.channel, chatId, editedReply);
+    updatedItem = shadowDB.updateStatus(id, "modified", "ویرایش دستی توسط مدیر و ارسال به مقصد", editedReply) || item;
+  } else {
+    return res.status(400).json({ error: "Invalid action. Must be approve, reject, or modify." });
   }
 
-  res.json({ success: true, item });
+  res.json({ success: true, item: updatedItem });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BALE WEBHOOK ENDPOINT — Receives real messages from Bale Bot API
+// ─────────────────────────────────────────────────────────────────────────────
+app.post("/webhook/bale", async (req, res) => {
+  // Verify Bale webhook secret token if configured
+  if (BALE_WEBHOOK_SECRET) {
+    const incomingSecret = req.headers["x-telegram-bot-api-secret-token"] || "";
+    if (incomingSecret !== BALE_WEBHOOK_SECRET) {
+      console.warn("[BALE WEBHOOK] Secret token mismatch — request rejected.");
+      return res.status(403).json({ error: "Forbidden" });
+    }
+  }
+
+  // Acknowledge immediately
+  res.status(200).json({ ok: true });
+
+  try {
+    const update = req.body;
+    const message = update?.message;
+    if (!message) return;
+
+    const chatId = String(message.chat?.id || message.from?.id || "");
+    const senderName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || "کاربر بله";
+    const text: string = message.text || message.caption || "";
+
+    if (!text.trim() || !chatId) return;
+
+    console.log(`[BALE WEBHOOK] From: ${chatId} (${senderName}) | Text: ${text.slice(0, 60)}`);
+
+    // Record inbound event to audit log
+    const now = new Date();
+    auditDB.insert({
+      id: `bale-in-${Date.now()}`,
+      timestamp: now.toISOString(),
+      timeFormatted: now.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      dateFormatted: now.toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+      channelId: "bale",
+      channelName: "پیام‌رسان بله (Bale Hook)",
+      eventType: "inbound_message",
+      severity: "info",
+      summary: `پیام ورودی از بله: ${senderName} (${chatId})`,
+      details: text.slice(0, 200),
+      triggeredBy: "inbound_webhook",
+    });
+
+    // Run through pipeline
+    await processPipelineMessage("bale", chatId, senderName, text, "Personal", "shadow");
+
+  } catch (err) {
+    console.error("[BALE WEBHOOK ERROR]:", err);
+  }
+});
+
+// GET Bale bot health check (admin only)
+app.get("/api/admin/bale/health", async (req, res) => {
+  const bale = getBaleDispatcher();
+  if (!bale) {
+    return res.json({ ok: false, configured: false, message: "BALE_BOT_TOKEN not set in environment." });
+  }
+  const health = await bale.healthCheck();
+  res.json({ ok: health.ok, configured: true, botName: health.botName, botUsername: health.botUsername });
+});
+
 
 // Setup Vite middleware
 async function startServer() {
