@@ -10,6 +10,7 @@ import { EvolutionWhatsAppHub } from './components/EvolutionWhatsAppHub';
 import { SettingsMenuModal } from './components/SettingsMenuModal';
 import { GatewayHistoryTab } from './components/GatewayHistoryTab';
 import { ChannelPlatform, ChannelGatewayStatus, ShadowReviewItem, PipelineTraceStep, GlobalPrivacySettings, GatewayPulseConfig } from './types';
+import { authFetch } from './utils/api';
 
 const INITIAL_CHANNELS: ChannelGatewayStatus[] = [
   {
@@ -80,7 +81,7 @@ export default function App() {
 
   // Fetch initial state from server
   useEffect(() => {
-    fetch('/api/pipeline/state')
+    authFetch('/api/pipeline/state')
       .then((res) => res.json())
       .then((data) => {
         if (data.channels) setChannels(data.channels);
@@ -98,7 +99,7 @@ export default function App() {
     const intervalMs = Math.max(2, pulseConfig.refreshIntervalSec || 3) * 1000;
     const interval = setInterval(() => {
       if (document.hidden) return;
-      fetch('/api/system/pulse-settings')
+      authFetch('/api/system/pulse-settings')
         .then((res) => res.json())
         .then((data) => {
           if (data.channels) setChannels(data.channels);
@@ -112,7 +113,7 @@ export default function App() {
 
   const handleTriggerPulsePing = async (mode?: 'simulate_spike') => {
     try {
-      const res = await fetch('/api/gateways/pulse-ping', {
+      const res = await authFetch('/api/gateways/pulse-ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
@@ -133,7 +134,7 @@ export default function App() {
 
   const handleShadowAction = async (id: string, action: 'approve' | 'reject' | 'modify', editedReply?: string) => {
     try {
-      const res = await fetch('/api/pipeline/shadow/action', {
+      const res = await authFetch('/api/pipeline/shadow/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, action, editedReply }),
@@ -201,7 +202,7 @@ export default function App() {
         {activeTab === 'whatsapp-hub' && (
           <EvolutionWhatsAppHub
             onShadowUpdated={() => {
-              fetch('/api/pipeline/state')
+              authFetch('/api/pipeline/state')
                 .then((r) => r.json())
                 .then((d) => { if (d.shadowQueue) setShadowQueue(d.shadowQueue); });
             }}
@@ -233,7 +234,7 @@ export default function App() {
         {activeTab === 'history' && (
           <GatewayHistoryTab
             onRefreshChannels={() => {
-              fetch('/api/pipeline/state')
+              authFetch('/api/pipeline/state')
                 .then((r) => r.json())
                 .then((d) => {
                   if (d.channels) setChannels(d.channels);

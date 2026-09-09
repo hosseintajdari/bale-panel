@@ -57,6 +57,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_shadow_channel ON shadow_queue(channel);
   CREATE INDEX IF NOT EXISTS idx_audit_channel ON audit_logs(channel_id);
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS bot_sessions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    image TEXT,
+    timestamp TEXT NOT NULL,
+    sender_name TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE INDEX IF NOT EXISTS idx_bot_sessions_lookup ON bot_sessions(tenant_id, session_id, created_at ASC);
 `);
 
 export interface ShadowRecord {
@@ -247,12 +260,240 @@ export const auditDB = {
   getAll(limit = 200): AuditLogRecord[] {
     return (stmtGetAuditLogs.all(limit) as any[]).map(rowToAuditRecord);
   },
+  queryFiltered(params: {
+    channel?: string;
+    eventType?: string;
+    severity?: string;
+    search?: string;
+    limit?: number;
+  }): { events: AuditLogRecord[]; stats: { totalEvents: number; heartbeats: number; statusChanges: number; latencyAlerts: number; configChanges: number } } {
+    let sql = "SELECT * FROM audit_logs WHERE 1=1";
+    const args: any[] = [];
+
+    if (params.channel && params.channel !== "all") {
+      sql += " AND (channel_id = ? OR channel_id = 'all')";
+      args.push(params.channel);
+    }
+    if (params.eventType && params.eventType !== "all") {
+      sql += " AND event_type = ?";
+      args.push(params.eventType);
+    }
+    if (params.severity && params.severity !== "all") {
+      sql += " AND severity = ?";
+      args.push(params.severity);
+    }
+    if (params.search && params.search.trim()) {
+      const q = `%${params.search.trim()}%`;
+      sql += " AND (summary LIKE ? OR details LIKE ? OR channel_name LIKE ? OR channel_id LIKE ? OR id LIKE ? OR previous_status LIKE ? OR new_status LIKE ?)";
+      args.push(q, q, q, q, q, q, q);
+    }
+
+    sql += " ORDER BY created_at DESC LIMIT ?";
+    args.push(params.limit || 200);
+
+    const rows = db.prepare(sql).all(...args) as any[];
+    const events = rows.map(rowToAuditRecord);
+
+    const statsRow = db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN event_type = 'heartbeat' THEN 1 ELSE 0 END) as heartbeats,
+        SUM(CASE WHEN event_type = 'status_change' THEN 1 ELSE 0 END) as statusChanges,
+        SUM(CASE WHEN event_type = 'latency_alert' THEN 1 ELSE 0 END) as latencyAlerts,
+        SUM(CASE WHEN event_type = 'config_change' THEN 1 ELSE 0 END) as configChanges
+      FROM audit_logs
+    `).get() as any;
+
+    const stats = {
+      totalEvents: statsRow?.total || 0,
+      heartbeats: statsRow?.heartbeats || 0,
+      statusChanges: statsRow?.statusChanges || 0,
+      latencyAlerts: statsRow?.latencyAlerts || 0,
+      configChanges: statsRow?.configChanges || 0,
+    };
+
+    return { events, stats };
+  },
   clear(): void {
     db.prepare("DELETE FROM audit_logs").run();
   },
   count(): number {
     return (db.prepare("SELECT COUNT(*) as c FROM audit_logs").get() as any).c;
   },
+  seedIfEmpty(): void {
+    const count = (db.prepare("SELECT COUNT(*) as c FROM audit_logs").get() as any).c;
+    if (count === 0) {
+      const now = Date.now();
+      const initialLogs: AuditLogRecord[] = [
+        {
+          id: "aud-109",
+          timestamp: new Date(now - 45 * 1000).toISOString(),
+          timeFormatted: new Date(now - 45 * 1000).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dateFormatted: new Date().toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+          channelId: "whatsapp",
+          channelName: "واتساپ (WhatsApp Gateway)",
+          eventType: "heartbeat",
+          severity: "success",
+          summary: "پالس سلامت دوره‌ای و استعلام لتنسی موفق",
+          details: "پینگ 24ms با نوسان جیتر 1.8ms • سوکت Evolution API v2 کاملاً پایدار و آنلاین است.",
+          latencyMs: 24,
+          jitterMs: 1.8,
+          healthLevel: "optimal",
+          packetLossPct: 0.0,
+          webhookAckRatePct: 99.8,
+          triggeredBy: "system_heartbeat",
+          metadata: { endpoint: "https://wa-relay.embednet.internal/pulse", protocol: "TLS 1.3" },
+        },
+        {
+          id: "aud-108",
+          timestamp: new Date(now - 3 * 60 * 1000).toISOString(),
+          timeFormatted: new Date(now - 3 * 60 * 1000).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dateFormatted: new Date().toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+          channelId: "bale",
+          channelName: "پیام‌رسان بله (Bale Hook)",
+          eventType: "heartbeat",
+          severity: "info",
+          summary: "ارزیابی اتصال خط رله داخلی ایران (bale-med)",
+          details: "لتنسی ۳۸ میلی‌ثانیه‌ای ثبت شد. تطابق بدون وقفه با پروتکل شبیه‌ساز پایپ‌لاین پزشکی.",
+          latencyMs: 38,
+          jitterMs: 3.8,
+          healthLevel: "optimal",
+          packetLossPct: 0.0,
+          webhookAckRatePct: 99.4,
+          triggeredBy: "system_heartbeat",
+        },
+        {
+          id: "aud-107",
+          timestamp: new Date(now - 9 * 60 * 1000).toISOString(),
+          timeFormatted: new Date(now - 9 * 60 * 1000).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dateFormatted: new Date().toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+          channelId: "telegram",
+          channelName: "تلگرام (Telegram Bot API)",
+          eventType: "status_change",
+          severity: "warning",
+          summary: "تغییر وضعیت گیت‌وی به حالت آماده‌باش (Standby)",
+          details: "درگاه تلگرام به عنوان پشتیبان اضطراری تعیین شد و وضعیت آن از Active به Standby منتقل گشت.",
+          previousStatus: "active",
+          newStatus: "standby",
+          latencyMs: 52,
+          jitterMs: 5.2,
+          healthLevel: "stable",
+          triggeredBy: "operator_toggle",
+        },
+        {
+          id: "aud-106",
+          timestamp: new Date(now - 17 * 60 * 1000).toISOString(),
+          timeFormatted: new Date(now - 17 * 60 * 1000).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dateFormatted: new Date().toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+          channelId: "sms",
+          channelName: "سامانه پیامک (SMS Alert Gate)",
+          eventType: "latency_alert",
+          severity: "warning",
+          summary: "نوسان تاخیر پول ارسال سریع پیامک",
+          details: "لتنسی استعلام به 110ms رسید و در محدوده زرد (هشدار تاخیر) قرار گرفت. کلیه وب‌هوک‌ها تایید شده‌اند.",
+          latencyMs: 110,
+          jitterMs: 12.4,
+          healthLevel: "warning",
+          packetLossPct: 0.0,
+          webhookAckRatePct: 98.9,
+          triggeredBy: "system_heartbeat",
+        },
+        {
+          id: "aud-105",
+          timestamp: new Date(now - 32 * 60 * 1000).toISOString(),
+          timeFormatted: new Date(now - 32 * 60 * 1000).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dateFormatted: new Date().toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+          channelId: "all",
+          channelName: "پیکربندی کل گیت‌وی‌ها",
+          eventType: "config_change",
+          severity: "info",
+          summary: "فعال‌سازی سیستم پالس تله‌متری بلادرنگ و پایش جیتر",
+          details: "بازه تازه‌سازی خودکار روی ۳۰ ثانیه تنظیم شد و آستانه هشدار نوسان جیتر روی ۱۵ میلی‌ثانیه قفل شد.",
+          triggeredBy: "operator_toggle",
+          metadata: { refreshIntervalSec: 30, alertOnJitterThresholdMs: 15 },
+        },
+        {
+          id: "aud-104",
+          timestamp: new Date(now - 65 * 60 * 1000).toISOString(),
+          timeFormatted: new Date(now - 65 * 60 * 1000).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dateFormatted: new Date().toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+          channelId: "whatsapp",
+          channelName: "واتساپ (WhatsApp Gateway)",
+          eventType: "status_change",
+          severity: "success",
+          summary: "اتصال موفق دستگاه جفت‌شده و آغاز گوش‌به‌زنگ",
+          details: "کانکشن لایه سوکت Baileys برقرار شد. پروتکل ضد مسدودی Inbound-First فعال گردید.",
+          previousStatus: "disconnected",
+          newStatus: "active",
+          latencyMs: 22,
+          jitterMs: 1.6,
+          healthLevel: "optimal",
+          triggeredBy: "system_heartbeat",
+        },
+      ];
+      for (const log of initialLogs) {
+        this.insert(log);
+      }
+    }
+  },
+};
+
+auditDB.seedIfEmpty();
+
+export interface SessionMessage {
+  id: string;
+  sessionId: string;
+  tenantId?: string;
+  role: "user" | "model" | "system";
+  content: string;
+  image?: string;
+  timestamp: string;
+  senderName?: string;
+}
+
+const stmtInsertSessionMessage = db.prepare(`
+  INSERT INTO bot_sessions (id, session_id, tenant_id, role, content, image, timestamp, sender_name)
+  VALUES (@id, @sessionId, @tenantId, @role, @content, @image, @timestamp, @senderName)
+`);
+
+const stmtGetSessionMessages = db.prepare(`
+  SELECT * FROM bot_sessions WHERE tenant_id = ? AND session_id = ? ORDER BY created_at ASC
+`);
+
+const stmtClearSession = db.prepare(`
+  DELETE FROM bot_sessions WHERE tenant_id = ? AND session_id = ?
+`);
+
+export const sessionDB = {
+  addMessage(msg: SessionMessage): void {
+    stmtInsertSessionMessage.run({
+      id: msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      sessionId: msg.sessionId,
+      tenantId: msg.tenantId || "default",
+      role: msg.role,
+      content: msg.content,
+      image: msg.image || null,
+      timestamp: msg.timestamp,
+      senderName: msg.senderName || null,
+    });
+  },
+  getMessages(sessionId: string, tenantId = "default"): SessionMessage[] {
+    const rows = stmtGetSessionMessages.all(tenantId, sessionId) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      tenantId: r.tenant_id,
+      role: r.role,
+      content: r.content,
+      image: r.image ?? undefined,
+      timestamp: r.timestamp,
+      senderName: r.sender_name ?? undefined,
+    }));
+  },
+  clearSession(sessionId: string, tenantId = "default"): void {
+    stmtClearSession.run(tenantId, sessionId);
+  },
 };
 
 export default db;
+

@@ -32,6 +32,7 @@ import {
   ChannelPlatform,
 } from '../types';
 import { getLatencyHealth } from '../utils/healthAlerts';
+import { authFetch } from '../utils/api';
 
 interface GatewayHistoryTabProps {
   onRefreshChannels?: () => void;
@@ -73,7 +74,7 @@ export const GatewayHistoryTab: React.FC<GatewayHistoryTabProps> = ({ onRefreshC
       if (selectedEventType !== 'all') params.append('eventType', selectedEventType);
       if (selectedSeverity !== 'all') params.append('severity', selectedSeverity);
 
-      const res = await fetch(`/api/gateways/history?${params.toString()}`);
+      const res = await authFetch(`/api/gateways/history?${params.toString()}`);
       const data = await res.json();
       if (data.success) {
         setEvents(data.events || []);
@@ -96,7 +97,7 @@ export const GatewayHistoryTab: React.FC<GatewayHistoryTabProps> = ({ onRefreshC
   const handleManualHeartbeat = async (mode?: 'simulate_spike') => {
     try {
       setIsPinging(true);
-      const res = await fetch('/api/gateways/pulse-ping', {
+      const res = await authFetch('/api/gateways/pulse-ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
@@ -117,7 +118,7 @@ export const GatewayHistoryTab: React.FC<GatewayHistoryTabProps> = ({ onRefreshC
   const handleUpdateStatus = async () => {
     try {
       setIsUpdatingStatus(true);
-      const res = await fetch('/api/gateways/status', {
+      const res = await authFetch('/api/gateways/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -145,7 +146,7 @@ export const GatewayHistoryTab: React.FC<GatewayHistoryTabProps> = ({ onRefreshC
       return;
     }
     try {
-      const res = await fetch('/api/gateways/history/clear', { method: 'POST' });
+      const res = await authFetch('/api/gateways/history/clear', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         await fetchHistory();

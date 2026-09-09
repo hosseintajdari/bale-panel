@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { shadowDB, auditDB, type ShadowRecord } from "./src/lib/db/database.js";
+import { shadowDB, auditDB, sessionDB, type ShadowRecord } from "./src/lib/db/database.js";
 import { getBaleDispatcher } from "./src/lib/outbox/BaleDispatcher.js";
 
 dotenv.config();
@@ -23,7 +23,7 @@ if (missingEnv.length > 0) {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3001", 10);
 
 app.use(express.json({ limit: "20mb" }));
 
@@ -102,11 +102,14 @@ interface ChatMessage {
   senderName?: string;
 }
 
-const botSessions: Record<string, ChatMessage[]> = {};
-
 // Health check endpoint
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// UI operator session bootstrap endpoint (serves operator token for internal UI frontend)
+app.get("/api/auth/token", (req, res) => {
+  res.json({ token: PANEL_API_SECRET });
 });
 
 // Endpoint: AI Productive Note Expander & Structurer
@@ -274,21 +277,22 @@ app.post("/api/bot/chat", async (req, res) => {
       return res.status(400).json({ error: "Message or image is required." });
     }
 
-    if (!botSessions[sessionId]) {
-      botSessions[sessionId] = [];
-    }
+    const tenantId = (req.headers["x-tenant-id"] as string) || req.body.tenantId || "default";
 
-    // Append user message
-    const userMsg: ChatMessage = {
+    // Persist inbound user message
+    sessionDB.addMessage({
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      sessionId,
+      tenantId,
       role: "user",
       content: message || "[Sent an image]",
       image: imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : undefined,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-    botSessions[sessionId].push(userMsg);
+    });
 
-    // Build context history for Gemini
-    const history = botSessions[sessionId].slice(-10); // Keep last 10 exchanges for context
+    // Build context history from SQLite
+    const allSessionMsgs = sessionDB.getMessages(sessionId, tenantId);
+    const history = allSessionMsgs.slice(-10); // Keep last 10 exchanges for context
 
     const ai = getGenAI();
 
@@ -346,17 +350,22 @@ app.post("/api/bot/chat", async (req, res) => {
 
     const replyText = response.text || "No response generated.";
 
-    const botMsg: ChatMessage = {
+    // Persist bot model response
+    sessionDB.addMessage({
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      sessionId,
+      tenantId,
       role: "model",
       content: replyText,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-    botSessions[sessionId].push(botMsg);
+    });
+
+    const updatedHistory = sessionDB.getMessages(sessionId, tenantId);
 
     res.json({
       reply: replyText,
       sessionId,
-      history: botSessions[sessionId],
+      history: updatedHistory,
     });
   } catch (error: any) {
     console.error("Error in /api/bot/chat:", error);
@@ -368,9 +377,9 @@ app.post("/api/bot/chat", async (req, res) => {
 
 // Clear session history
 app.post("/api/bot/clear", (req, res) => {
-  const { sessionId = "default-session" } = req.body;
-  botSessions[sessionId] = [];
-  res.json({ success: true, message: `Session ${sessionId} reset.` });
+  const { sessionId = "default-session", tenantId = "default" } = req.body;
+  sessionDB.clearSession(sessionId, tenantId);
+  res.json({ success: true, message: `Session ${sessionId} (tenant: ${tenantId}) reset.` });
 });
 
 // Custom Node.js Bot Code Generator with Gemini
@@ -1106,16 +1115,38 @@ function recordGatewayAuditEvent(event: Omit<ServerGatewayAuditEvent, 'id' | 'ti
   const now = new Date();
   const timeFormatted = now.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const dateFormatted = now.toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" });
+  const id = `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const auditEvent: ServerGatewayAuditEvent = {
-    id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id,
     timestamp: now.toISOString(),
     timeFormatted,
     dateFormatted,
     ...event,
   };
-  gatewayAuditLogs.unshift(auditEvent);
-  if (gatewayAuditLogs.length > 500) {
-    gatewayAuditLogs.pop();
+  try {
+    auditDB.insert({
+      id,
+      timestamp: now.toISOString(),
+      timeFormatted,
+      dateFormatted,
+      channelId: event.channelId,
+      channelName: event.channelName,
+      eventType: event.eventType,
+      severity: event.severity,
+      summary: event.summary,
+      details: event.details,
+      latencyMs: event.latencyMs,
+      jitterMs: event.jitterMs,
+      healthLevel: event.healthLevel,
+      previousStatus: event.previousStatus,
+      newStatus: event.newStatus,
+      packetLossPct: event.packetLossPct,
+      webhookAckRatePct: event.webhookAckRatePct,
+      triggeredBy: event.triggeredBy,
+      metadata: event.metadata,
+    });
+  } catch (e) {
+    console.error("Failed to insert audit event into DB:", e);
   }
   return auditEvent;
 }
@@ -1495,58 +1526,27 @@ app.post("/api/gateways/pulse-ping", (req, res) => {
 app.get("/api/gateways/history", (req, res) => {
   const { search, channel, eventType, severity, limit = "200" } = req.query;
 
-  let filtered = [...gatewayAuditLogs];
-
-  if (channel && channel !== "all") {
-    filtered = filtered.filter((ev) => ev.channelId === channel || ev.channelId === "all");
-  }
-
-  if (eventType && eventType !== "all") {
-    filtered = filtered.filter((ev) => ev.eventType === eventType);
-  }
-
-  if (severity && severity !== "all") {
-    filtered = filtered.filter((ev) => ev.severity === severity);
-  }
-
-  if (search && typeof search === "string" && search.trim()) {
-    const q = search.trim().toLowerCase();
-    filtered = filtered.filter((ev) =>
-      ev.summary.toLowerCase().includes(q) ||
-      (ev.details && ev.details.toLowerCase().includes(q)) ||
-      ev.channelName.toLowerCase().includes(q) ||
-      ev.channelId.toLowerCase().includes(q) ||
-      ev.id.toLowerCase().includes(q) ||
-      (ev.previousStatus && ev.previousStatus.toLowerCase().includes(q)) ||
-      (ev.newStatus && ev.newStatus.toLowerCase().includes(q))
-    );
-  }
-
-  const maxItems = parseInt(limit as string, 10) || 200;
-  const items = filtered.slice(0, maxItems);
-
-  // Calculate audit statistics across all history
-  const stats = {
-    totalEvents: gatewayAuditLogs.length,
-    heartbeats: gatewayAuditLogs.filter((ev) => ev.eventType === "heartbeat").length,
-    statusChanges: gatewayAuditLogs.filter((ev) => ev.eventType === "status_change").length,
-    latencyAlerts: gatewayAuditLogs.filter((ev) => ev.eventType === "latency_alert").length,
-    configChanges: gatewayAuditLogs.filter((ev) => ev.eventType === "config_change").length,
-  };
+  const result = auditDB.queryFiltered({
+    channel: channel as string,
+    eventType: eventType as string,
+    severity: severity as string,
+    search: search as string,
+    limit: parseInt(limit as string, 10) || 200,
+  });
 
   res.json({
     success: true,
-    total: filtered.length,
-    stats,
-    events: items,
+    total: result.events.length,
+    stats: result.stats,
+    events: result.events,
   });
 });
 
 // Clear/Prune History Log
 app.post("/api/gateways/history/clear", (req, res) => {
-  gatewayAuditLogs.length = 0;
+  auditDB.clear();
 
-  recordGatewayAuditEvent({
+  const resetEv = recordGatewayAuditEvent({
     channelId: "all",
     channelName: "سیستم مانیتورینگ گیت‌وی",
     eventType: "config_change",
@@ -1559,7 +1559,7 @@ app.post("/api/gateways/history/clear", (req, res) => {
   res.json({
     success: true,
     message: "تاریخچه مانیتورینگ گیت‌وی‌ها بازنشانی شد.",
-    events: gatewayAuditLogs,
+    events: [resetEv],
   });
 });
 
