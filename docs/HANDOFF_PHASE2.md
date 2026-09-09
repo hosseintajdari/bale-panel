@@ -63,15 +63,15 @@ EVOLUTION_INSTANCE="embednet-wa-primary"
 
 برای اتصال واقعی:
 
-۱. از BotFather بله (`@BotFather`) یک bot token بگیرید
-۲. `BALE_BOT_TOKEN` را در `.env` پر کنید
-۳. webhook را تنظیم کنید:
-   ```
+۱. توکن از BotFather بله دریافت شد: ربات `@b2balclawhbot` (شناسه: `1249156763`) ✅
+۲. `BALE_BOT_TOKEN` در فایل `.env` محلی مقداردهی و در اتصال مستقیم به API تست شد ✅
+۳. تنظیم Webhook جهت دریافت پیام‌های کاربران:
+   ```bash
    curl -X POST "https://tapi.bale.ai/bot<TOKEN>/setWebhook" \
      -H "Content-Type: application/json" \
      -d '{"url": "https://your-domain.com/webhook/bale", "secret_token": "..."}'
    ```
-   یا از health API پنل: `GET /api/admin/bale/health`
+   یا از طریق health API پنل: `GET /api/admin/bale/health` (با هدر Bearer)
 
 ---
 
