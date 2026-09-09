@@ -70,6 +70,17 @@ db.exec(`
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
   CREATE INDEX IF NOT EXISTS idx_bot_sessions_lookup ON bot_sessions(tenant_id, session_id, created_at ASC);
+
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin', 'operator', 'auditor')),
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_used_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash);
 `);
 
 export interface ShadowRecord {
@@ -492,6 +503,74 @@ export const sessionDB = {
   },
   clearSession(sessionId: string, tenantId = "default"): void {
     stmtClearSession.run(tenantId, sessionId);
+  },
+};
+
+export type UserRole = "admin" | "operator" | "auditor";
+
+export interface ApiKeyRecord {
+  id: string;
+  tokenHash: string;
+  name: string;
+  role: UserRole;
+  tenantId: string;
+  createdAt: number;
+  lastUsedAt?: number;
+}
+
+const stmtInsertApiKey = db.prepare(`
+  INSERT INTO api_keys (id, token_hash, name, role, tenant_id, created_at, last_used_at)
+  VALUES (@id, @tokenHash, @name, @role, @tenantId, @createdAt, @lastUsedAt)
+`);
+
+const stmtGetApiKeyByHash = db.prepare(`
+  SELECT * FROM api_keys WHERE token_hash = ?
+`);
+
+const stmtListApiKeys = db.prepare(`
+  SELECT id, name, role, tenant_id, created_at, last_used_at FROM api_keys ORDER BY created_at DESC
+`);
+
+const stmtDeleteApiKey = db.prepare(`
+  DELETE FROM api_keys WHERE id = ?
+`);
+
+const stmtTouchApiKey = db.prepare(`
+  UPDATE api_keys SET last_used_at = unixepoch() WHERE token_hash = ?
+`);
+
+export const apiKeyDB = {
+  createKey(record: { id: string; tokenHash: string; name: string; role: UserRole; tenantId?: string }): void {
+    stmtInsertApiKey.run({
+      id: record.id,
+      tokenHash: record.tokenHash,
+      name: record.name,
+      role: record.role,
+      tenantId: record.tenantId || "default",
+      createdAt: Math.floor(Date.now() / 1000),
+      lastUsedAt: null,
+    });
+  },
+  validateKey(tokenHash: string): { valid: boolean; role?: UserRole; tenantId?: string; name?: string } {
+    const row = stmtGetApiKeyByHash.get(tokenHash) as any;
+    if (!row) return { valid: false };
+    stmtTouchApiKey.run(tokenHash);
+    return { valid: true, role: row.role as UserRole, tenantId: row.tenant_id, name: row.name };
+  },
+  listKeys(): Omit<ApiKeyRecord, "tokenHash">[] {
+    const rows = stmtListApiKeys.all() as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      role: r.role,
+      tenantId: r.tenant_id,
+      createdAt: r.created_at,
+      lastUsedAt: r.last_used_at ?? undefined,
+    }));
+  },
+  deleteKey(id: string): boolean {
+    const res = stmtDeleteApiKey.run(id);
+    return res.changes > 0;
   },
 };
 

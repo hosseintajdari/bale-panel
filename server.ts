@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { shadowDB, auditDB, sessionDB, type ShadowRecord } from "./src/lib/db/database.js";
+import { shadowDB, auditDB, sessionDB, apiKeyDB, type ShadowRecord, type UserRole } from "./src/lib/db/database.js";
 import { getBaleDispatcher } from "./src/lib/outbox/BaleDispatcher.js";
 
 dotenv.config();
@@ -28,49 +28,75 @@ const PORT = parseInt(process.env.PORT || "3001", 10);
 app.use(express.json({ limit: "20mb" }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADMIN AUTH MIDDLEWARE — Bearer token guard for all /api/admin/* routes
-// Set PANEL_API_SECRET in your .env to a strong random string.
+// AUTHENTICATION & RBAC MIDDLEWARE (Admin, Operator, Auditor)
+// Supports master PANEL_API_SECRET as superadmin, plus scoped SQLite API keys
 // ─────────────────────────────────────────────────────────────────────────────
 const PANEL_API_SECRET = process.env.PANEL_API_SECRET!;
 
-function requireAdminAuth(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) {
-  const authHeader = req.headers["authorization"] || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (!token || token !== PANEL_API_SECRET) {
-    return res.status(401).json({ error: "Unauthorized. Valid Bearer token required." });
-  }
-  next();
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
 }
+
+interface AuthenticatedUser {
+  role: UserRole;
+  tenantId: string;
+  name: string;
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser;
+    }
+  }
+}
+
+function authenticateToken(authHeader = ""): AuthenticatedUser | null {
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!token) return null;
+
+  // Master key bypass (Super Admin)
+  if (token === PANEL_API_SECRET) {
+    return { role: "admin", tenantId: "system", name: "SuperAdmin (Master Key)" };
+  }
+
+  // Check DB keys
+  const tokenHash = hashToken(token);
+  const check = apiKeyDB.validateKey(tokenHash);
+  if (check.valid && check.role) {
+    return { role: check.role, tenantId: check.tenantId || "default", name: check.name || "API Client" };
+  }
+
+  return null;
+}
+
+function requireRoles(allowedRoles: UserRole[]) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = authenticateToken(req.headers["authorization"]);
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized. Valid Bearer token required." });
+    }
+    if (!allowedRoles.includes(user.role)) {
+      return res.status(403).json({ 
+        error: `Forbidden. Role '${user.role}' lacks sufficient privileges. Required: [${allowedRoles.join(", ")}]` 
+      });
+    }
+    req.user = user;
+    next();
+  };
+}
+
+const requireAdminAuth = requireRoles(["admin"]);
+const requireOperatorAuth = requireRoles(["admin", "operator"]);
+const requireAuditorAuth = requireRoles(["admin", "operator", "auditor"]);
 
 // Apply auth guard to all admin routes
 app.use("/api/admin", requireAdminAuth);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PIPELINE / GATEWAY / SYSTEM AUTH MIDDLEWARE — Scope: operator-level access
-// Uses the same PANEL_API_SECRET for simplicity. In production, issue separate
-// scoped tokens per consumer (bale-auto, external clients, etc.)
-// ─────────────────────────────────────────────────────────────────────────────
-function requireOperatorAuth(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) {
-  const authHeader = req.headers["authorization"] || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (!token || token !== PANEL_API_SECRET) {
-    return res.status(401).json({ error: "Unauthorized. Valid Bearer token required for pipeline/system access." });
-  }
-  next();
-}
-
-// Protect pipeline, gateway management, and system settings routes
+// Protect pipeline, gateway management, system settings, and evolution routes
 app.use("/api/pipeline", requireOperatorAuth);
-app.use("/api/gateways", requireOperatorAuth);
-app.use("/api/system", requireOperatorAuth);
+app.use("/api/gateways", requireAuditorAuth); // Read/pulse operations allowed for auditor+
+app.use("/api/system", requireAdminAuth); // System settings change restricted to admin
 app.use("/api/evolution", requireOperatorAuth);
 app.use("/api/ledger", requireOperatorAuth);
 
@@ -2121,6 +2147,68 @@ app.get("/api/admin/bale/health", async (req, res) => {
   }
   const health = await bale.healthCheck();
   res.json({ ok: health.ok, configured: true, botName: health.botName, botUsername: health.botUsername });
+});
+
+// POST Set Bale Webhook URL
+app.post("/api/admin/bale/set-webhook", async (req, res) => {
+  const bale = getBaleDispatcher();
+  if (!bale) {
+    return res.status(400).json({ error: "BALE_BOT_TOKEN is not configured." });
+  }
+  const { webhookUrl, secretToken } = req.body;
+  if (!webhookUrl || typeof webhookUrl !== "string") {
+    return res.status(400).json({ error: "webhookUrl is required." });
+  }
+  const success = await bale.setWebhook(webhookUrl.trim(), secretToken || BALE_WEBHOOK_SECRET);
+  res.json({ success, webhookUrl });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RBAC API KEY MANAGEMENT (Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/api/admin/keys", (req, res) => {
+  const keys = apiKeyDB.listKeys();
+  res.json({ success: true, keys });
+});
+
+app.post("/api/admin/keys", (req, res) => {
+  const { name, role = "operator", tenantId = "default" } = req.body;
+  if (!name || typeof name !== "string") {
+    return res.status(400).json({ error: "Name is required for API key." });
+  }
+  if (!["admin", "operator", "auditor"].includes(role)) {
+    return res.status(400).json({ error: "Invalid role. Must be 'admin', 'operator', or 'auditor'." });
+  }
+
+  // Generate a random high-entropy token
+  const rawToken = `emb_${role}_${crypto.randomBytes(24).toString("hex")}`;
+  const tokenHash = hashToken(rawToken);
+  const id = `key-${Date.now()}`;
+
+  apiKeyDB.createKey({
+    id,
+    tokenHash,
+    name: name.trim(),
+    role: role as UserRole,
+    tenantId: tenantId.trim(),
+  });
+
+  // Return the plaintext token once upon creation
+  res.json({
+    success: true,
+    key: {
+      id,
+      name,
+      role,
+      tenantId,
+      rawToken, // Presented once to operator
+    },
+  });
+});
+
+app.delete("/api/admin/keys/:id", (req, res) => {
+  const deleted = apiKeyDB.deleteKey(req.params.id);
+  res.json({ success: deleted });
 });
 
 
