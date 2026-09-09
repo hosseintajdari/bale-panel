@@ -3,7 +3,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "embednet.db");
 
