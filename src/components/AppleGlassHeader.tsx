@@ -11,12 +11,14 @@ import {
   Database,
   Sliders,
   Zap,
+  Send,
 } from 'lucide-react';
 import { GlobalPrivacySettings, ChannelGatewayStatus, ChannelPlatform } from '../types';
+import { TabType } from './SidebarNav';
 
 interface AppleGlassHeaderProps {
-  activeTab: 'console' | 'whatsapp-hub' | 'shadow' | 'ledger' | 'integrations' | 'code-generator' | 'history';
-  setActiveTab?: (tab: any) => void;
+  activeTab: TabType;
+  setActiveTab?: (tab: TabType) => void;
   shadowCount: number;
   environmentMode: 'shadow' | 'live';
   setEnvironmentMode: (mode: 'shadow' | 'live') => void;
@@ -31,11 +33,16 @@ interface AppleGlassHeaderProps {
 const TAB_META: Record<string, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
   'console': { label: 'Pipeline Console', icon: Terminal },
   'whatsapp-hub': { label: 'WhatsApp Gateway', icon: PhoneCall },
+  'telegram-manager': { label: 'Telegram Bot API', icon: Send },
   'shadow': { label: 'Shadow Queue', icon: ShieldAlert },
-  'ledger': { label: 'WorkLedger', icon: Layers },
-  'integrations': { label: 'Vault & Keys', icon: KeyRound },
+  'ledger': { label: 'WorkLedger & Artifacts', icon: Layers },
+  'integrations': { label: 'Capabilities & Keys', icon: KeyRound },
   'code-generator': { label: 'Code Generator', icon: Code2 },
-  'history': { label: 'Audit Logs', icon: History },
+  'history': { label: 'Scheduled Jobs & Audit', icon: History },
+  'capabilities': { label: 'Capabilities & Tools', icon: KeyRound },
+  'messaging': { label: 'Messaging Router', icon: Terminal },
+  'artifacts': { label: 'Artifacts Explorer', icon: Layers },
+  'scheduled-jobs': { label: 'Scheduled Jobs', icon: History },
 };
 
 export const AppleGlassHeader = memo<AppleGlassHeaderProps>(({

@@ -408,6 +408,13 @@ app.post("/api/bot/clear", (req, res) => {
   res.json({ success: true, message: `Session ${sessionId} (tenant: ${tenantId}) reset.` });
 });
 
+// Get list of recent bot/pipeline sessions
+app.get("/api/sessions/overview", (req, res) => {
+  const tenantId = (req.headers["x-tenant-id"] as string) || "default";
+  const sessions = sessionDB.listRecentSessions(tenantId);
+  res.json({ success: true, sessions });
+});
+
 // Custom Node.js Bot Code Generator with Gemini
 app.post("/api/generate-bot-code", async (req, res) => {
   try {

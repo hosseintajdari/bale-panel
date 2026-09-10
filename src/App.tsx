@@ -11,6 +11,8 @@ import { EvolutionWhatsAppHub } from './components/EvolutionWhatsAppHub';
 import { SettingsMenuModal } from './components/SettingsMenuModal';
 import { GatewayHistoryTab } from './components/GatewayHistoryTab';
 import { TelegramManager } from './components/TelegramManager';
+import { AgentCommandDock } from './components/AgentCommandDock';
+import { Zap } from 'lucide-react';
 import { ChannelPlatform, ChannelGatewayStatus, ShadowReviewItem, PipelineTraceStep, GlobalPrivacySettings, GatewayPulseConfig } from './types';
 import { authFetch } from './utils/api';
 
@@ -61,6 +63,31 @@ export default function App() {
   const [environmentMode, setEnvironmentMode] = useState<'shadow' | 'live'>('shadow');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState('tg-gateway-migration');
+
+  const handleSendMessageFromDock = useCallback(async (message: string, model: string) => {
+    try {
+      const res = await authFetch('/api/pipeline/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel: activeChannel,
+          senderId: activeSessionId,
+          senderDisplay: `Operator (${model})`,
+          text: message,
+          environmentMode,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.shadowRecord) {
+          setShadowQueue((prev) => [data.shadowRecord, ...prev]);
+        }
+      }
+    } catch (err) {
+      console.error('Dock dispatch error:', err);
+    }
+  }, [activeChannel, activeSessionId, environmentMode]);
 
   const [privacySettings, setPrivacySettings] = useState<GlobalPrivacySettings>({
     retentionPolicy: 'audited',
@@ -171,10 +198,22 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
+        activeSessionId={activeSessionId}
+        onSelectSession={(sid) => {
+          setActiveSessionId(sid);
+          if (sid.startsWith('tg-')) setActiveTab('telegram-manager');
+          else if (sid.startsWith('wa-')) setActiveTab('whatsapp-hub');
+          else setActiveTab('console');
+        }}
+        onNewSession={() => {
+          const newId = `sess-${Date.now()}`;
+          setActiveSessionId(newId);
+          setActiveTab('console');
+        }}
       />
 
       {/* Main Workspace Area (Margin accommodates left sidebar width) */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-200 ${isSidebarCollapsed ? 'ml-14' : 'ml-56'}`}>
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-200 ${isSidebarCollapsed ? 'ml-14' : 'ml-64'}`}>
         
         {/* Top Header with integrated channel switcher */}
         <AppleGlassHeader
@@ -256,6 +295,9 @@ export default function App() {
           )}
         </main>
 
+        {/* Agent Command Input Dock */}
+        <AgentCommandDock onSendMessage={handleSendMessageFromDock} />
+
         {/* Global Settings & Privacy Modal */}
         <SettingsMenuModal
           isOpen={isSettingsOpen}
@@ -270,20 +312,29 @@ export default function App() {
           onUpdateChannels={(updated) => setChannels(updated)}
         />
 
-        {/* Clean Developer Status Footer */}
-        <footer className="w-full border-t border-[#161B29] bg-[#07090E] py-2 px-4 text-[11px] text-zinc-500 font-mono">
+        {/* Minimalist Telemetry & Status Bar (Hermes / Antigravity Cockpit Style) */}
+        <footer className="w-full border-t border-[#1C202B] bg-[#07090E] py-1.5 px-4 text-[11px] text-zinc-400 font-mono select-none">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span className="text-zinc-400 font-semibold">Embednet OS Core</span>
-              <span>•</span>
-              <span className="text-zinc-500">Multi-Channel Messaging Middleware</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-zinc-300 hover:text-white cursor-pointer transition-colors">
+                <span className="w-2 h-2 rounded-full bg-zinc-500" />
+                <span>This device</span>
+              </div>
+              <span className="text-zinc-600">•</span>
+              <div className="flex items-center gap-1.5 text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-medium">Gateway ready</span>
+              </div>
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="text-zinc-400">Mode: {environmentMode.toUpperCase()}</span>
-              <span>•</span>
-              <span className="text-zinc-500">Fast SQLite & AES-256 Vault</span>
+              <div className="flex items-center gap-1 text-zinc-400">
+                <Zap className="w-3 h-3 text-amber-400" />
+                <span>Smart</span>
+              </div>
+              <span className="text-zinc-600">•</span>
+              <span className="text-blue-400"># v0.21.0 (+1178)</span>
+              <span className="text-zinc-600 font-mono text-[10px]">5dde75a</span>
             </div>
           </div>
         </footer>

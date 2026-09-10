@@ -520,7 +520,92 @@ export const sessionDB = {
   clearSession(sessionId: string, tenantId = "default"): void {
     stmtClearSession.run(tenantId, sessionId);
   },
+  listRecentSessions(tenantId = "default"): Array<{
+    sessionId: string;
+    channel: string;
+    title: string;
+    lastMessage: string;
+    lastActivity: number;
+    messageCount: number;
+    pinned?: boolean;
+  }> {
+    const rows = db.prepare(`
+      SELECT 
+        session_id as sessionId,
+        MAX(created_at) as lastActivity,
+        COUNT(*) as messageCount,
+        (SELECT content FROM bot_sessions s2 WHERE s2.session_id = bot_sessions.session_id ORDER BY created_at DESC LIMIT 1) as lastMessage,
+        (SELECT sender_name FROM bot_sessions s3 WHERE s3.session_id = bot_sessions.session_id AND sender_name IS NOT NULL ORDER BY created_at DESC LIMIT 1) as senderName
+      FROM bot_sessions
+      WHERE tenant_id = ?
+      GROUP BY session_id
+      ORDER BY lastActivity DESC
+      LIMIT 50
+    `).all(tenantId) as any[];
+
+    return rows.map((r) => {
+      let channel = "general";
+      if (r.sessionId.startsWith("tg-") || r.sessionId.includes("telegram")) channel = "telegram";
+      else if (r.sessionId.startsWith("bale-") || r.sessionId.includes("bale")) channel = "bale";
+      else if (r.sessionId.startsWith("wa-") || r.sessionId.includes("whatsapp")) channel = "whatsapp";
+
+      return {
+        sessionId: r.sessionId,
+        channel,
+        title: r.senderName || r.sessionId,
+        lastMessage: r.lastMessage || "",
+        lastActivity: r.lastActivity,
+        messageCount: r.messageCount,
+      };
+    });
+  },
+  seedIfEmpty(): void {
+    const count = (db.prepare("SELECT COUNT(*) as c FROM bot_sessions").get() as any).c;
+    if (count === 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const seeds = [
+        {
+          id: "msg-init-1",
+          sessionId: "tg-gateway-migration",
+          role: "user" as const,
+          content: "بررسی و تحلیل راهکارهای مهاجرت وب‌هوک به تلگرام و بله",
+          senderName: "Gateway migration prompts...",
+          timestamp: "3d ago",
+        },
+        {
+          id: "msg-init-2",
+          sessionId: "bale-med-pipeline",
+          role: "user" as const,
+          content: "پایش پایداری اتصال خط رله داخلی ایران (bale-med)",
+          senderName: "عیب‌یابی عملکرد ایجنت پایپ‌لاین",
+          timestamp: "2d ago",
+        },
+        {
+          id: "msg-init-3",
+          sessionId: "tg-cognitive-protocol",
+          role: "user" as const,
+          content: "پروتکل معماری شناختی و همگام‌سازی یادداشت‌ها در نوشن",
+          senderName: "Cognitive And Architectural Protocol",
+          timestamp: "1d ago",
+        },
+        {
+          id: "msg-init-4",
+          sessionId: "wa-patient-triage",
+          role: "user" as const,
+          content: "ارزیابی پاسخ‌های هوشمند درگاه واتساپ و قوانین ضد مسدودی",
+          senderName: "بهینه‌سازی رابط کاربری و عملکرد ایجنت",
+          timestamp: "5h ago",
+        },
+      ];
+
+      for (const s of seeds) {
+        this.addMessage(s);
+      }
+    }
+  }
 };
+
+sessionDB.seedIfEmpty();
 
 export type UserRole = "admin" | "operator" | "auditor";
 
