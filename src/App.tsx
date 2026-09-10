@@ -100,7 +100,7 @@ export default function App() {
   useEffect(() => {
     if (!pulseConfig.enabled) return;
 
-    const intervalMs = Math.max(3, pulseConfig.refreshIntervalSec || 4) * 1000;
+    const intervalMs = Math.max(2, pulseConfig.refreshIntervalSec || 3) * 1000;
     const interval = setInterval(() => {
       if (document.hidden) return;
       authFetch('/api/system/pulse-settings')
@@ -262,6 +262,7 @@ export default function App() {
           onUpdatePulseConfig={(newConfig) => setPulseConfig(newConfig)}
           channels={channels}
           onTriggerPulsePing={handleTriggerPulsePing}
+          onUpdateChannels={(updated) => setChannels(updated)}
         />
 
         {/* Clean Developer Status Footer */}
