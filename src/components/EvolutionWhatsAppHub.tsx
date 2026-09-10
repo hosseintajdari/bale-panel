@@ -5,20 +5,17 @@ import {
   KeyRound,
   ShieldCheck,
   ShieldAlert,
-  Clock,
   CheckCircle2,
   Copy,
   Check,
   RefreshCw,
   Send,
   BookMarked,
-  Sliders,
-  Sparkles,
   AlertTriangle,
-  FileText,
-  UserCheck
+  Radio,
 } from 'lucide-react';
 import { EvolutionInstanceState, WhatsAppInstanceMode } from '../types';
+import { authFetch } from '../utils/api';
 
 interface EvolutionWhatsAppHubProps {
   onLedgerUpdated?: () => void;
@@ -51,7 +48,7 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
   const fetchStatus = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/evolution/status');
+      const res = await authFetch('/api/evolution/status');
       const data = await res.json();
       if (data.success && data.instance) {
         setInstance(data.instance);
@@ -73,7 +70,7 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
     if (!phoneNumber.trim()) return;
     setIsRequestingCode(true);
     try {
-      const res = await fetch('/api/evolution/pair-code', {
+      const res = await authFetch('/api/evolution/pair-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber }),
@@ -92,7 +89,7 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
 
   const handleSwitchMode = async (mode: WhatsAppInstanceMode) => {
     try {
-      const res = await fetch('/api/evolution/mode', {
+      const res = await authFetch('/api/evolution/mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
@@ -100,7 +97,6 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
       const data = await res.json();
       if (data.success && instance) {
         setInstance({ ...instance, mode });
-        // Adjust simulation text based on mode
         if (mode === 'personal_notebook') {
           setSimSenderName('من (مالک بات شخصی)');
           setSimMessage('هزینه بنزین ۲۵۰ هزار تومن و جلسه با تیم فنی برای روز یکشنبه ساعت ۳ رو یادداشت کن.');
@@ -117,7 +113,7 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
   const handleCopyPairingCode = () => {
     navigator.clipboard.writeText(pairingCode.replace('-', ''));
     setPairingCopied(true);
-    setTimeout(() => setPairingCopied(false), 2500);
+    setTimeout(() => setPairingCopied(false), 2000);
   };
 
   const handleSimulateInbound = async () => {
@@ -126,7 +122,7 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
     setSimResult(null);
 
     try {
-      const res = await fetch('/api/evolution/inbound-message', {
+      const res = await authFetch('/api/evolution/inbound-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -145,7 +141,7 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
         if (onShadowUpdated) onShadowUpdated();
       }
     } catch (err: any) {
-      setSimResult({ error: err.message || 'خطای شبکه' });
+      setSimResult({ error: err.message || 'خطای ارتباط با سرور' });
     } finally {
       setSimRunning(false);
     }
@@ -154,161 +150,165 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
   const isPharmacyMode = instance?.mode === 'pharmacy_inbound';
 
   return (
-    <div className="space-y-4" dir="rtl">
+    <div className="space-y-2.5 font-sans">
       {/* Top Banner: Status & Mode Selector */}
-      <div className="p-4 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Evolution API v2</span>
-              </span>
-              <span className="text-[10px] font-mono text-zinc-400">
-                Instance: {instance?.instanceName || 'embednet-wa-primary'}
-              </span>
-            </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-[#0A0C10] border border-[#1C202B]">
+        <div className="flex items-center gap-2">
+          <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-xs font-semibold text-zinc-100 font-mono">
+            WhatsApp Gateway (Evolution API v2)
+          </span>
+          <span className="text-[10px] font-mono text-emerald-300 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>{instance?.instanceName || 'embednet-wa-primary'}</span>
+          </span>
+        </div>
 
-            <h2 className="text-sm font-semibold text-white tracking-tight font-sans flex items-center gap-2">
-              <PhoneCall className="w-4 h-4 text-emerald-400" />
-              <span>اتصال واتساپ و مدیریت سشن (WhatsApp Gateway & Anti-Ban)</span>
-            </h2>
-          </div>
+        {/* Mode Switcher Buttons */}
+        <div className="flex items-center p-0.5 rounded-md bg-black/40 border border-white/[0.06] text-xs">
+          <button
+            onClick={() => handleSwitchMode('personal_notebook')}
+            className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer flex items-center gap-1.5 ${
+              !isPharmacyMode
+                ? 'bg-white/[0.12] text-white font-medium'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <BookMarked className="w-3 h-3 text-sky-400" />
+            <span>Personal Notebook</span>
+          </button>
 
-          {/* Mode Switcher Buttons */}
-          <div className="flex items-center p-1 rounded-2xl bg-black/40 border border-white/[0.08] text-xs">
-            <button
-              onClick={() => handleSwitchMode('personal_notebook')}
-              className={`px-3.5 py-1.5 rounded-xl transition-all font-sans cursor-pointer flex items-center gap-1.5 ${
-                !isPharmacyMode
-                  ? 'bg-white/[0.14] text-white border border-white/[0.15] shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <BookMarked className="w-3.5 h-3.5 text-sky-400" />
-              <span>دفترچه چت شخصی</span>
-            </button>
-
-            <button
-              onClick={() => handleSwitchMode('pharmacy_inbound')}
-              className={`px-3.5 py-1.5 rounded-xl transition-all font-sans cursor-pointer flex items-center gap-1.5 ${
-                isPharmacyMode
-                  ? 'bg-white/[0.14] text-white border border-white/[0.15] shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>واتساپ داروخانه (ضد بلاک)</span>
-            </button>
-          </div>
+          <button
+            onClick={() => handleSwitchMode('pharmacy_inbound')}
+            className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer flex items-center gap-1.5 ${
+              isPharmacyMode
+                ? 'bg-white/[0.12] text-white font-medium'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <ShieldCheck className="w-3 h-3 text-emerald-400" />
+            <span>Pharmacy Inbound (Anti-Ban)</span>
+          </button>
         </div>
       </div>
 
-      {/* Sub-tabs: Pairing Code (No QR Pain), QR Scan, Anti-Ban Invariants, Test Simulator */}
-      <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-black/40 border border-white/[0.08] backdrop-blur-xl">
+      {/* Sub-tabs Navigation */}
+      <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-[#0A0C10] border border-[#1C202B] text-xs font-mono">
         <button
           onClick={() => setActiveTab('pairing-code')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
+          className={`px-2.5 py-1 rounded text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'pairing-code'
-              ? 'bg-white/[0.12] text-white border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white/[0.1] text-white font-medium'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-          <span>کد اتصال ۸ رقمی (Pairing Code - بدون دوربین)</span>
+          <KeyRound className="w-3 h-3 text-amber-400" />
+          <span>8-Digit Pairing Code</span>
         </button>
 
         <button
           onClick={() => setActiveTab('qr-code')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
+          className={`px-2.5 py-1 rounded text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'qr-code'
-              ? 'bg-white/[0.12] text-white border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white/[0.1] text-white font-medium'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <QrCode className="w-3.5 h-3.5 text-sky-400" />
-          <span>اسکن کیو‌آر (QR Code)</span>
+          <QrCode className="w-3 h-3 text-sky-400" />
+          <span>QR Code</span>
         </button>
 
         <button
           onClick={() => setActiveTab('antiban-settings')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
+          className={`px-2.5 py-1 rounded text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'antiban-settings'
-              ? 'bg-white/[0.12] text-white border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white/[0.1] text-white font-medium'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <ShieldAlert className="w-3.5 h-3.5 text-emerald-400" />
-          <span>قوانین ضد مسدودی حساب (Anti-Ban Guard)</span>
+          <ShieldAlert className="w-3 h-3 text-emerald-400" />
+          <span>Anti-Ban Rules</span>
         </button>
 
         <button
           onClick={() => setActiveTab('simulate-chat')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
+          className={`px-2.5 py-1 rounded text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'simulate-chat'
-              ? 'bg-white/[0.12] text-white border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white/[0.1] text-white font-medium'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <Send className="w-3.5 h-3.5 text-purple-400" />
-          <span>تست زنده پیام ورودی و ثبت در دفترچه</span>
+          <Send className="w-3 h-3 text-purple-400" />
+          <span>Inbound Simulator</span>
         </button>
       </div>
 
-      {/* TAB 1: PAIRING CODE (SOLVES QR FAILURES) */}
+      {/* TAB 1: PAIRING CODE */}
       {activeTab === 'pairing-code' && (
-        <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Input Side */}
-            <div className="space-y-3">
-              <label className="text-xs font-medium text-zinc-300 block">شماره تلفن اکانت واتساپ (با کد کشور ۹۸):</label>
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Input & Code Display */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-zinc-300 block font-mono">
+                WhatsApp Phone Number (E.164 with country code):
+              </label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   value={phoneNumber}
                   onChange={(e) => setPhoneNumber(e.target.value)}
                   placeholder="+98 912 000 0000"
-                  className="flex-1 bg-black/40 border border-white/[0.1] rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-white/30"
+                  className="flex-1 bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
                   dir="ltr"
                 />
                 <button
                   onClick={handleRequestPairingCode}
                   disabled={isRequestingCode}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/40 text-xs font-medium text-emerald-200 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                  className="px-3 py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-medium text-zinc-200 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-40 shrink-0 font-mono"
                 >
-                  {isRequestingCode ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
-                  <span>دریافت کد اتصال عددی</span>
+                  {isRequestingCode ? <RefreshCw className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                  <span>Generate</span>
                 </button>
               </div>
 
-              {/* Code Display Box */}
-              <div className="p-4 rounded-2xl bg-black/50 border border-emerald-500/30 flex flex-col items-center justify-center space-y-2">
-                <span className="text-[11px] font-sans text-zinc-400">کد جفت‌سازی ۸ رقمی (بدون نیاز به اسکن دوربین):</span>
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl font-mono tracking-widest text-emerald-300 font-bold px-3 py-1 rounded-xl bg-emerald-950/40 border border-emerald-500/20" dir="ltr">
+              {/* Code Box */}
+              <div className="p-2.5 rounded-md bg-black/50 border border-emerald-500/20 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-zinc-500 font-mono block">8-digit Device Code:</span>
+                  <span className="text-lg font-mono tracking-widest text-emerald-300 font-bold" dir="ltr">
                     {pairingCode}
                   </span>
-                  <button
-                    onClick={handleCopyPairingCode}
-                    className="p-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/[0.1] text-zinc-200 transition-all cursor-pointer"
-                    title="کپی کد"
-                  >
-                    {pairingCopied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
                 </div>
+                <button
+                  onClick={handleCopyPairingCode}
+                  className="px-2.5 py-1 rounded bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-zinc-200 text-xs flex items-center gap-1 transition-colors cursor-pointer font-mono"
+                  title="Copy code"
+                >
+                  {pairingCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-300 text-[10px]">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span className="text-[10px]">Copy</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
-            {/* Quick 3-step Instructions */}
-            <div className="p-4 rounded-2xl bg-black/30 border border-white/[0.06] space-y-2.5 text-xs">
-              <span className="font-semibold text-zinc-200 block">نحوه اتصال در واتساپ گوشی (کمتر از ۱۰ ثانیه):</span>
-              <ul className="space-y-2 text-zinc-400 font-sans list-disc list-inside leading-relaxed">
-                <li>در واتساپ گوشی به منوی <strong className="text-zinc-200">Settings</strong> یا سه نقطه بروید.</li>
-                <li>گزینه <strong className="text-zinc-200">Linked Devices</strong> (دستگاه‌های متصل) را باز کنید.</li>
-                <li>روی <strong className="text-zinc-200">Link a Device</strong> تپ کنید.</li>
-                <li>در پایین صفحه اسکن، روی <strong className="text-emerald-300">Link with phone number instead</strong> تپ کنید.</li>
-                <li>کد <span className="font-mono text-emerald-300 font-bold">{pairingCode}</span> را در گوشی وارد کنید.</li>
-              </ul>
+            {/* Instructions */}
+            <div className="p-2.5 rounded-md bg-black/40 border border-[#1C202B] space-y-1.5 text-xs">
+              <span className="font-semibold text-zinc-200 text-[11px] block font-mono">Quick Device Pairing (10 seconds):</span>
+              <ol className="space-y-1 text-zinc-400 font-sans list-decimal list-inside leading-relaxed text-[11px]">
+                <li>Open WhatsApp on phone → <strong className="text-zinc-200">Settings</strong> (or 3-dots menu).</li>
+                <li>Tap <strong className="text-zinc-200">Linked Devices</strong>.</li>
+                <li>Tap <strong className="text-zinc-200">Link a Device</strong>.</li>
+                <li>Tap <strong className="text-emerald-300">Link with phone number instead</strong>.</li>
+                <li>Enter code <span className="font-mono text-emerald-300 font-bold">{pairingCode}</span> on phone.</li>
+              </ol>
             </div>
           </div>
         </div>
@@ -316,112 +316,85 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
 
       {/* TAB 2: QR CODE */}
       {activeTab === 'qr-code' && (
-        <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-3 text-xs">
-            <span className="font-semibold text-zinc-200 text-sm block">اسکن تصویری کیو‌آر کد</span>
-            <p className="text-zinc-400 leading-relaxed font-sans max-w-md">
-              در صورت تمایل به اسکن دوربینی، دوربین واتساپ را مقابل این بارکد بگیرید. در صورت قطعی یا انقضا، دکمه تازه‌سازی را بزنید.
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+          <div className="space-y-2">
+            <span className="font-semibold text-zinc-200 text-xs block font-mono">Scan Multi-Device QR Code</span>
+            <p className="text-zinc-400 leading-relaxed font-sans max-w-md text-[11px]">
+              Point your WhatsApp camera at the QR code. The token refreshes automatically every 20 seconds.
             </p>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={async () => {
-                  await fetch('/api/evolution/qr-refresh', { method: 'POST' });
-                  fetchStatus();
-                }}
-                className="px-3.5 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.12] text-white text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>تجدید بارکد (Refresh QR)</span>
-              </button>
-              <span className="text-zinc-400 font-mono text-[11px]">
-                انقضا: هر ۲۰ ثانیه
-              </span>
-            </div>
+            <button
+              onClick={async () => {
+                await authFetch('/api/evolution/qr-refresh', { method: 'POST' });
+                fetchStatus();
+              }}
+              className="px-2.5 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-200 text-xs flex items-center gap-1.5 transition-colors cursor-pointer font-mono"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Refresh QR</span>
+            </button>
           </div>
 
-          <div className="p-4 rounded-2xl bg-white flex flex-col items-center justify-center shadow-2xl">
-            {/* Visual QR representation */}
-            <div className="w-44 h-44 bg-zinc-900 rounded-xl p-2 flex flex-col items-center justify-center border-2 border-dashed border-zinc-700 relative overflow-hidden">
-              <div className="grid grid-cols-6 gap-1 w-full h-full p-2 opacity-85">
-                {Array.from({ length: 36 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-xs ${
-                      (i % 2 === 0 && i % 3 !== 0) || i === 0 || i === 5 || i === 30
-                        ? 'bg-white'
-                        : 'bg-transparent'
-                    }`}
-                  />
-                ))}
-              </div>
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-                <QrCode className="w-12 h-12 text-emerald-400" />
-              </div>
+          <div className="p-3 rounded-lg bg-white flex flex-col items-center justify-center shrink-0">
+            <div className="w-28 h-28 bg-zinc-950 rounded p-2 flex items-center justify-center relative">
+              <QrCode className="w-16 h-16 text-emerald-400" />
             </div>
-            <span className="text-[10px] text-zinc-800 font-mono mt-2">Evolution Multi-Device QR</span>
+            <span className="text-[9px] text-zinc-700 font-mono mt-1">Multi-Device QR</span>
           </div>
         </div>
       )}
 
-      {/* TAB 3: ANTI-BAN INVARIANTS (STRICT ZERO-BAN POLICY) */}
+      {/* TAB 3: ANTI-BAN RULES */}
       {activeTab === 'antiban-settings' && (
-        <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Invariant 1 */}
-            <div className="p-4 rounded-2xl bg-black/40 border border-emerald-500/20 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-300 font-sans">۱. ورود پیام از طرف مقابل (Strict Inbound)</span>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </div>
-              <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-                ارسال پیام اولیه (Cold Message) به افراد غریبه قفل است. مکالمه منحصراً با پیام بیمار یا مخاطب آغاز می‌شود.
-              </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <div className="p-2.5 rounded-lg bg-[#0A0C10] border border-emerald-500/20 space-y-1 text-xs">
+            <div className="flex items-center justify-between text-emerald-300 font-mono text-[11px]">
+              <span>1. Strict Inbound Only</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             </div>
+            <p className="text-[10px] text-zinc-400 leading-relaxed font-sans">
+              Outbound unsolicited messages are locked. Conversations must strictly initiate from customer/patient.
+            </p>
+          </div>
 
-            {/* Invariant 2 */}
-            <div className="p-4 rounded-2xl bg-black/40 border border-emerald-500/20 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-300 font-sans">۲. ذخیره در دفترچه پیش از پاسخ</span>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </div>
-              <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-                به محض رسیدن وب‌هوک، متن در Work Ledger پایدار می‌شود تا حتی در صورت قطعی شبکه یا خطای سرور سشن از بین نرود.
-              </p>
+          <div className="p-2.5 rounded-lg bg-[#0A0C10] border border-emerald-500/20 space-y-1 text-xs">
+            <div className="flex items-center justify-between text-emerald-300 font-mono text-[11px]">
+              <span>2. Persist Ledger First</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             </div>
+            <p className="text-[10px] text-zinc-400 leading-relaxed font-sans">
+              Immediate audit logging into WorkLedger prior to dispatch prevents state loss on connection drop.
+            </p>
+          </div>
 
-            {/* Invariant 3 */}
-            <div className="p-4 rounded-2xl bg-black/40 border border-emerald-500/20 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-300 font-sans">۳. تاخیر انسانی و ارسال Presence</span>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </div>
-              <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-                اعمال تاخیر تصادفی بین ۲ تا ۵ ثانیه همراه با پکت <code>composing...</code> (در حال تایپ) جهت رفتار طبیعی انسان.
-              </p>
+          <div className="p-2.5 rounded-lg bg-[#0A0C10] border border-emerald-500/20 space-y-1 text-xs">
+            <div className="flex items-center justify-between text-emerald-300 font-mono text-[11px]">
+              <span>3. Human Jitter + Typing</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             </div>
+            <p className="text-[10px] text-zinc-400 leading-relaxed font-sans">
+              Random 2-5s human response delay simulation accompanied by <code>composing...</code> typing event.
+            </p>
           </div>
         </div>
       )}
 
-      {/* TAB 4: SIMULATE INBOUND CHAT & LEDGER INGESTION */}
+      {/* TAB 4: SIMULATION */}
       {activeTab === 'simulate-chat' && (
-        <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Message Inputs */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-zinc-200">فرستنده پیام ورودی:</span>
-                <div className="flex items-center gap-2">
-                  <label className="text-[11px] text-zinc-400 flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isCounterpartyInitiated}
-                      onChange={(e) => setIsCounterpartyInitiated(e.target.checked)}
-                      className="rounded accent-emerald-500"
-                    />
-                    <span>پیام اول از سمت کاربر است (مجاز برای ضد بلاک)</span>
-                  </label>
-                </div>
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] space-y-2.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Input Form */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-zinc-200 text-[11px] font-mono">Inbound User Message:</span>
+                <label className="text-[10px] text-zinc-400 flex items-center gap-1 cursor-pointer font-mono">
+                  <input
+                    type="checkbox"
+                    checked={isCounterpartyInitiated}
+                    onChange={(e) => setIsCounterpartyInitiated(e.target.checked)}
+                    className="rounded accent-emerald-500"
+                  />
+                  <span>User-Initiated (Strict Inbound)</span>
+                </label>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -429,74 +402,79 @@ export const EvolutionWhatsAppHub: React.FC<EvolutionWhatsAppHubProps> = ({
                   type="text"
                   value={simSenderName}
                   onChange={(e) => setSimSenderName(e.target.value)}
-                  placeholder="نام فرستنده"
-                  className="bg-black/40 border border-white/[0.1] rounded-xl px-3 py-1.5 text-xs text-zinc-100"
+                  placeholder="Sender name"
+                  className="bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 font-sans"
                 />
                 <input
                   type="text"
                   value={simSenderPhone}
                   onChange={(e) => setSimSenderPhone(e.target.value)}
                   placeholder="+98912..."
-                  className="bg-black/40 border border-white/[0.1] rounded-xl px-3 py-1.5 text-xs text-zinc-100 font-mono"
+                  className="bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1 text-xs text-zinc-100 font-mono placeholder-zinc-500"
                   dir="ltr"
                 />
               </div>
 
               <textarea
-                rows={3}
+                rows={2}
                 value={simMessage}
                 onChange={(e) => setSimMessage(e.target.value)}
-                placeholder="متن پیام ورودی..."
-                className="w-full bg-black/40 border border-white/[0.1] rounded-xl p-3 text-xs text-zinc-100 focus:outline-none focus:border-white/30 resize-none font-sans"
+                placeholder="Incoming message text..."
+                className="w-full bg-[#10131A] border border-[#1C202B] rounded-md p-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-500 resize-none font-sans"
+                dir="rtl"
               />
 
               <button
                 onClick={handleSimulateInbound}
                 disabled={simRunning || !simMessage.trim()}
-                className="w-full py-2 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/40 text-xs font-semibold text-emerald-200 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                className="w-full py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-950 font-medium text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 font-mono"
               >
                 {simRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                <span>اجرای شبیه‌سازی دریافت پیام و خط لوله ضد بلاک</span>
+                <span>Execute Inbound Pipeline</span>
               </button>
             </div>
 
-            {/* Results Box */}
-            <div className="p-4 rounded-2xl bg-black/50 border border-white/[0.08] flex flex-col justify-between text-xs space-y-3">
+            {/* Result Box */}
+            <div className="p-2.5 rounded-md bg-black/40 border border-[#1C202B] flex flex-col justify-between text-xs min-h-[140px]">
               <div>
-                <span className="font-semibold text-zinc-300 block mb-2">نتیجه اجرای خط لوله و محافظت ضد مسدودی:</span>
-                
+                <span className="font-semibold text-zinc-400 text-[10px] font-mono block mb-1.5">
+                  Pipeline & Anti-Ban Evaluation:
+                </span>
+
                 {simResult ? (
                   simResult.error ? (
-                    <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 text-rose-300 space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold">
-                        <AlertTriangle className="w-4 h-4 text-rose-400" />
-                        <span>رد شده توسط سپر ضد بلاک:</span>
+                    <div className="p-2 rounded bg-rose-950/30 border border-rose-500/30 text-rose-300 text-[11px] space-y-1">
+                      <div className="flex items-center gap-1 font-bold font-mono">
+                        <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Blocked by Guard:</span>
                       </div>
-                      <p className="text-[11px] leading-relaxed">{simResult.error}</p>
+                      <p className="font-sans">{simResult.error}</p>
                     </div>
                   ) : (
-                    <div className="space-y-2 text-[11px] font-mono">
-                      <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-300">
-                        <span>سپر ضد بلاک:</span>
-                        <span className="font-bold">تایید شد (Strict Inbound Passed)</span>
+                    <div className="space-y-1 text-[10px] font-mono">
+                      <div className="flex items-center justify-between p-1.5 rounded bg-emerald-950/20 border border-emerald-500/20 text-emerald-300">
+                        <span>Anti-Ban Check:</span>
+                        <span className="font-bold">Strict Inbound Passed</span>
                       </div>
-                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/[0.06] text-zinc-300">
-                        <span>شناسه ذخیره در دفترچه (Ledger):</span>
+                      <div className="flex items-center justify-between p-1 rounded bg-white/[0.02] border border-white/[0.04] text-zinc-300">
+                        <span>Ledger Item ID:</span>
                         <span className="text-zinc-100">{simResult.persistedInLedgerId}</span>
                       </div>
-                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/[0.06] text-zinc-300">
-                        <span>تاخیر شبیه‌ساز انسان (Human Jitter):</span>
-                        <span className="text-amber-300">{simResult.humanJitterDelaySec} ثانیه + پکت Typing</span>
+                      <div className="flex items-center justify-between p-1 rounded bg-white/[0.02] border border-white/[0.04] text-zinc-300">
+                        <span>Human Jitter:</span>
+                        <span className="text-amber-300">{simResult.humanJitterDelaySec}s + Typing event</span>
                       </div>
-                      <div className="p-2.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-zinc-200 font-sans space-y-1">
-                        <span className="text-[10px] text-zinc-400 font-mono block">پاسخ استخراج‌شده:</span>
-                        <p className="leading-relaxed">{simResult.reply}</p>
+                      <div className="p-2 rounded bg-white/[0.03] border border-white/[0.06] text-zinc-200">
+                        <span className="text-[9px] text-zinc-400 font-mono block">Proposed Reply:</span>
+                        <div dir="rtl">
+                          <p className="text-[11px] leading-relaxed select-text mt-0.5 font-sans">{simResult.reply}</p>
+                        </div>
                       </div>
                     </div>
                   )
                 ) : (
-                  <div className="h-40 flex items-center justify-center text-zinc-500 text-center">
-                    پیام را ارسال کنید تا مراحل اعتبارسنجی ضد بلاک و ذخیره در دفترچه به صورت زنده نمایش داده شوند.
+                  <div className="h-28 flex items-center justify-center text-zinc-500 text-center text-[11px] font-mono">
+                    Send test message to evaluate anti-ban guard and ledger persistence.
                   </div>
                 )}
               </div>

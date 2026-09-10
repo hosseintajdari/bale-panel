@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import {
-  Cpu,
   Key,
   Shield,
   ShieldCheck,
@@ -8,543 +7,458 @@ import {
   Lock,
   GitBranch,
   FileText,
-  UserPlus,
+  Plus,
+  Trash2,
+  Copy,
+  Check,
   RefreshCw,
-  Sliders,
   Sparkles,
-  ToggleLeft,
-  ToggleRight,
-  Database,
-  ExternalLink,
-  ShieldAlert,
-  HardDrive,
-  Layers
+  Server,
+  AlertCircle,
+  Cpu,
+  Terminal,
+  Radio,
 } from 'lucide-react';
-import { AuthManager } from './AuthManager';
+import { authFetch } from '../utils/api';
 
-interface AdminIntegrationState {
-  notion: { connected: boolean; workspace: string; lastSync: string };
-  github: { connected: boolean; repo: string; branch: string; lastSync: string };
-  activeAiProvider: 'gemini_direct' | 'codex_account_proxy' | 'chatgpt_subscription';
-  pipelinePermissions: {
-    allowDeterministicPricing: boolean;
-    allowWebScraping: boolean;
-    allowDatabaseMutation: boolean;
-  };
-  guestSandboxes: Array<{
-    id: string;
-    guestName: string;
-    assignedBot: string;
-    quotaUsed: string;
-    isolatedMemoryPath: string;
-    status: 'active' | 'paused';
-  }>;
+interface ApiKeyItem {
+  id: string;
+  name: string;
+  role: 'admin' | 'operator' | 'auditor';
+  tenant_id: string;
+  created_at: string;
+  last_used_at: string | null;
 }
 
-export const McpAccountsGrid: React.FC = () => {
-  const [data, setData] = useState<AdminIntegrationState>({
-    notion: { connected: true, workspace: "Embednet-Personal-Workspace", lastSync: "۱۰ دقیقه پیش" },
-    github: { connected: true, repo: "sgwteam/embednet-os-core", branch: "main", lastSync: "۲۵ دقیقه پیش" },
-    activeAiProvider: 'gemini_direct',
-    pipelinePermissions: {
-      allowDeterministicPricing: true,
-      allowWebScraping: false,
-      allowDatabaseMutation: true,
-    },
-    guestSandboxes: [
-      {
-        id: "sbx-01",
-        guestName: "علی (دستیار شخصی تلگرام)",
-        assignedBot: "Telegram @ali_assistant_bot",
-        quotaUsed: "۱۴٪ از سهمیه ماهانه",
-        isolatedMemoryPath: "/sandboxes/tenant_ali_db",
-        status: "active"
-      },
-      {
-        id: "sbx-02",
-        guestName: "همکار تیم تست (کارهای روزمره بله)",
-        assignedBot: "Bale @colleague_test_bot",
-        quotaUsed: "۲۸٪ از سهمیه ماهانه",
-        isolatedMemoryPath: "/sandboxes/tenant_colleague_db",
-        status: "active"
-      }
-    ]
-  });
+interface VaultCredential {
+  id: string;
+  service: string;
+  label: string;
+  maskedSecret?: string;
+  status: string;
+}
 
-  const [newGuestName, setNewGuestName] = useState('');
-  const [newGuestBot, setNewGuestBot] = useState('');
-  const [isCreatingSandbox, setIsCreatingSandbox] = useState(false);
-  const [integrationsSubView, setIntegrationsSubView] = useState<'auth-vault' | 'ai-providers' | 'guest-sandboxes'>('auth-vault');
-  const [credentialsCount, setCredentialsCount] = useState<number>(3);
+export const McpAccountsGrid = memo(() => {
+  // API Keys (Phase 4 RBAC)
+  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
+  const [isKeysLoading, setIsKeysLoading] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyRole, setNewKeyRole] = useState<'admin' | 'operator' | 'auditor'>('operator');
+  const [newKeyTenant, setNewKeyTenant] = useState('default');
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
+
+  // Bale Webhook
+  const [baleWebhookUrl, setBaleWebhookUrl] = useState('');
+  const [baleSecretToken, setBaleSecretToken] = useState('');
+  const [isSettingWebhook, setIsSettingWebhook] = useState(false);
+  const [webhookFeedback, setWebhookFeedback] = useState<{ msg: string; success: boolean } | null>(null);
+
+  // Fetch API Keys
+  const fetchKeys = async () => {
+    try {
+      setIsKeysLoading(true);
+      const res = await authFetch('/api/admin/keys');
+      const data = await res.json();
+      if (data.success && data.keys) {
+        setApiKeys(data.keys);
+      }
+    } catch (e) {
+      console.error('Failed to fetch api keys:', e);
+    } finally {
+      setIsKeysLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetch('/api/admin/integrations')
-      .then(res => res.json())
-      .then(res => {
-        if (res.success && res.data) setData(res.data);
-      })
-      .catch(err => console.error("Error fetching integrations:", err));
+    fetchKeys();
   }, []);
 
-  const handleToggleProvider = async (provider: 'gemini_direct' | 'codex_account_proxy' | 'chatgpt_subscription') => {
-    try {
-      const res = await fetch('/api/admin/integrations/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field: 'activeAiProvider', value: provider })
-      });
-      const json = await res.json();
-      if (json.success) setData(json.data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  const handleCreateKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newKeyName.trim() || isCreatingKey) return;
 
-  const handleTogglePermission = async (permKey: keyof AdminIntegrationState['pipelinePermissions']) => {
+    setIsCreatingKey(true);
+    setGeneratedToken(null);
     try {
-      const currentVal = data.pipelinePermissions[permKey];
-      const res = await fetch('/api/admin/integrations/toggle', {
+      const res = await authFetch('/api/admin/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field: permKey, value: !currentVal })
+        body: JSON.stringify({
+          name: newKeyName.trim(),
+          role: newKeyRole,
+          tenant_id: newKeyTenant.trim() || 'default',
+        }),
       });
-      const json = await res.json();
-      if (json.success) setData(json.data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleCreateSandbox = async () => {
-    if (!newGuestName.trim()) return;
-    setIsCreatingSandbox(true);
-    try {
-      const res = await fetch('/api/admin/sandbox/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ guestName: newGuestName, assignedBot: newGuestBot })
-      });
-      const json = await res.json();
-      if (json.success) {
-        setData(json.data);
-        setNewGuestName('');
-        setNewGuestBot('');
+      const data = await res.json();
+      if (data.success && data.rawToken) {
+        setGeneratedToken(data.rawToken);
+        setNewKeyName('');
+        fetchKeys();
       }
     } catch (e) {
-      console.error(e);
+      console.error('Key creation failed:', e);
     } finally {
-      setIsCreatingSandbox(false);
+      setIsCreatingKey(false);
     }
+  };
+
+  const handleDeleteKey = async (id: string) => {
+    try {
+      const res = await authFetch(`/api/admin/keys/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setApiKeys((prev) => prev.filter((k) => k.id !== id));
+      }
+    } catch (e) {
+      console.error('Failed to delete key:', e);
+    }
+  };
+
+  const handleSetBaleWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!baleWebhookUrl.trim() || isSettingWebhook) return;
+
+    setIsSettingWebhook(true);
+    setWebhookFeedback(null);
+    try {
+      const res = await authFetch('/api/admin/bale/set-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: baleWebhookUrl.trim(),
+          secret_token: baleSecretToken.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      setWebhookFeedback({
+        msg: data.message || (data.success ? 'وب‌هوک بله با موفقیت ثبت شد' : 'خطا در ثبت وب‌هوک'),
+        success: !!data.success,
+      });
+    } catch (e: any) {
+      setWebhookFeedback({ msg: 'خطا در ارتباط با سرور: ' + e.message, success: false });
+    } finally {
+      setIsSettingWebhook(false);
+    }
+  };
+
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedToken(true);
+    setTimeout(() => setCopiedToken(false), 2500);
   };
 
   return (
-    <div className="space-y-5" dir="rtl">
-      
-      {/* 1. Header & System Architecture Summary */}
-      <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.3)] flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-              Admin Personal Studio
-            </span>
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/20">
-              Multi-Tenant Isolated
-            </span>
+    <div className="space-y-3 font-sans">
+      {/* Top Telemetry Summary Badges */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-300">
+              <Lock className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono text-zinc-500 uppercase">Vault Security</div>
+              <div className="text-xs font-semibold text-zinc-200">AES-256-GCM</div>
+            </div>
           </div>
-          <h2 className="text-base font-semibold text-white tracking-tight font-sans flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-zinc-300" />
-            <span>استودیوی اختصاصی مدیر، ارکستراسیون منابع هوش مصنوعی و حریم خصوصی</span>
-          </h2>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 shrink-0">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>هسته آماده و ایمن</span>
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-300">
+              <Key className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono text-zinc-500 uppercase">Active Keys</div>
+              <div className="text-xs font-semibold text-zinc-200">{apiKeys.length} Scoped Keys</div>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono text-sky-400">RBAC</span>
+        </div>
+
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-300">
+              <Sparkles className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono text-zinc-500 uppercase">AI Pipeline</div>
+              <div className="text-xs font-semibold text-zinc-200">Gemini 2.5 Flash</div>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono text-emerald-400">Live</span>
+        </div>
+
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-300">
+              <Server className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono text-zinc-500 uppercase">Persistence</div>
+              <div className="text-xs font-semibold text-zinc-200">SQLite (WAL)</div>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono text-zinc-400">Sync</span>
         </div>
       </div>
 
-      {/* Sub-Navigation Bar */}
-      <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-black/40 border border-white/[0.08] backdrop-blur-xl">
-        <button
-          onClick={() => setIntegrationsSubView('auth-vault')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
-            integrationsSubView === 'auth-vault'
-              ? 'bg-white/[0.12] text-white shadow-[0_0_15px_rgba(255,255,255,0.06)] border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
-          }`}
-        >
-          <ShieldCheck className={`w-3.5 h-3.5 ${integrationsSubView === 'auth-vault' ? 'text-sky-400' : 'text-zinc-400'}`} />
-          <span>مدیریت کلیدهای امن و احراز هویت (Auth Manager)</span>
-          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-            {credentialsCount} کلید
-          </span>
-        </button>
+      {/* Generated Token Banner (If any) */}
+      {generatedToken && (
+        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-emerald-300 text-xs font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>New API key generated. Make sure to copy it now; you won't be able to see it again:</span>
+            </div>
+            <button
+              onClick={() => setGeneratedToken(null)}
+              className="text-xs text-zinc-400 hover:text-zinc-200"
+            >
+              Dismiss
+            </button>
+          </div>
 
-        <button
-          onClick={() => setIntegrationsSubView('ai-providers')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
-            integrationsSubView === 'ai-providers'
-              ? 'bg-white/[0.12] text-white shadow-[0_0_15px_rgba(255,255,255,0.06)] border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
-          }`}
-        >
-          <Sparkles className={`w-3.5 h-3.5 ${integrationsSubView === 'ai-providers' ? 'text-emerald-400' : 'text-zinc-400'}`} />
-          <span>ارکستراسیون منابع و حریم خصوصی (AI & Privacy)</span>
-        </button>
-
-        <button
-          onClick={() => setIntegrationsSubView('guest-sandboxes')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-medium font-sans flex items-center gap-2 transition-all cursor-pointer ${
-            integrationsSubView === 'guest-sandboxes'
-              ? 'bg-white/[0.12] text-white shadow-[0_0_15px_rgba(255,255,255,0.06)] border border-white/[0.15]'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
-          }`}
-        >
-          <UserPlus className={`w-3.5 h-3.5 ${integrationsSubView === 'guest-sandboxes' ? 'text-purple-400' : 'text-zinc-400'}`} />
-          <span>سندباکس دوستان و گیت‌هاب / نوشن (Sandboxes & Sync)</span>
-        </button>
-      </div>
-
-      {/* VIEW 1: AUTH MANAGER */}
-      {integrationsSubView === 'auth-vault' && (
-        <AuthManager onCredentialsCountChange={setCredentialsCount} />
+          <div className="flex items-center gap-2 bg-black/50 p-2 rounded-md border border-emerald-500/20 font-mono text-xs text-emerald-200" dir="ltr">
+            <span className="flex-1 select-all break-all">{generatedToken}</span>
+            <button
+              onClick={() => handleCopy(generatedToken)}
+              className="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 flex items-center gap-1 shrink-0 transition-all cursor-pointer"
+            >
+              {copiedToken ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedToken ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+        </div>
       )}
 
-      {/* VIEW 2: AI PROVIDERS & PRIVACY ARCHITECTURE */}
-      {integrationsSubView === 'ai-providers' && (
-        <>
-          {/* 2. Privacy Architecture: Resolving bale-auto vs bale-med */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        
-        {/* bale-auto Zero-Retention Card */}
-        <div className="p-4 rounded-3xl backdrop-blur-2xl bg-gradient-to-br from-emerald-950/20 to-white/[0.02] border border-emerald-500/20 space-y-3">
+      {/* Section 1: Multi-Role RBAC API Keys Table */}
+      <div className="bg-[#0A0C10] border border-[#1C202B] rounded-lg p-3.5 shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-[#1C202B]">
+          <div>
+            <h3 className="text-xs font-medium text-zinc-100 flex items-center gap-2">
+              <Key className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Multi-Role RBAC API Keys</span>
+            </h3>
+            <p className="text-[11px] text-zinc-500">
+              Manage scoped API credentials for operators, pipeline dispatchers, and external telemetry agents.
+            </p>
+          </div>
+
+          <button
+            onClick={fetchKeys}
+            disabled={isKeysLoading}
+            className="p-1.5 rounded-md bg-white/[0.03] hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 border border-white/[0.06] text-xs self-end sm:self-auto cursor-pointer"
+            title="Refresh keys list"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isKeysLoading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        {/* Quick Add Form */}
+        <form onSubmit={handleCreateKey} className="grid grid-cols-1 sm:grid-cols-12 gap-2 p-2.5 rounded-md bg-white/[0.02] border border-white/[0.04]">
+          <div className="sm:col-span-5">
+            <input
+              type="text"
+              placeholder="Key identifier (e.g. bale-bot-prod)"
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+              className="w-full bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-sans"
+            />
+          </div>
+
+          <div className="sm:col-span-3">
+            <select
+              value={newKeyRole}
+              onChange={(e) => setNewKeyRole(e.target.value as any)}
+              className="w-full bg-[#10131A] border border-[#1C202B] rounded-md px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 cursor-pointer font-mono"
+            >
+              <option value="operator">Operator (Shadow Actions)</option>
+              <option value="admin">Admin (Full Control)</option>
+              <option value="auditor">Auditor (Read-Only)</option>
+            </select>
+          </div>
+
+          <div className="sm:col-span-2">
+            <input
+              type="text"
+              placeholder="Tenant (default)"
+              value={newKeyTenant}
+              onChange={(e) => setNewKeyTenant(e.target.value)}
+              className="w-full bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <button
+              type="submit"
+              disabled={isCreatingKey || !newKeyName.trim()}
+              className="w-full h-full py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-950 font-medium text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-40"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create Key</span>
+            </button>
+          </div>
+        </form>
+
+        {/* Keys Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-[#1C202B] text-zinc-500 font-mono text-[11px]">
+                <th className="pb-2 font-medium">Identifier</th>
+                <th className="pb-2 font-medium">Role</th>
+                <th className="pb-2 font-medium">Tenant ID</th>
+                <th className="pb-2 font-medium">Created</th>
+                <th className="pb-2 font-medium">Last Used</th>
+                <th className="pb-2 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1C202B]">
+              {apiKeys.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-zinc-500 font-mono">
+                    No scoped API keys found. Use form above to generate one.
+                  </td>
+                </tr>
+              ) : (
+                apiKeys.map((key) => (
+                  <tr key={key.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="py-2.5 font-medium text-zinc-200 font-sans">{key.name}</td>
+                    <td className="py-2.5">
+                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono uppercase font-medium ${
+                        key.role === 'admin'
+                          ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                          : key.role === 'operator'
+                          ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                          : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                      }`}>
+                        {key.role}
+                      </span>
+                    </td>
+                    <td className="py-2.5 font-mono text-zinc-400">{key.tenant_id}</td>
+                    <td className="py-2.5 font-mono text-zinc-500 text-[11px]">
+                      {key.created_at ? new Date(key.created_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="py-2.5 font-mono text-zinc-500 text-[11px]">
+                      {key.last_used_at ? new Date(key.last_used_at).toLocaleTimeString() : 'Never'}
+                    </td>
+                    <td className="py-2.5 text-right">
+                      <button
+                        onClick={() => handleDeleteKey(key.id)}
+                        className="p-1 rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        title="Revoke and delete key"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Section 2: Bale Official Bot Webhook Registration */}
+      <div className="bg-[#0A0C10] border border-[#1C202B] rounded-lg p-3.5 shadow-sm space-y-3">
+        <div className="pb-2.5 border-b border-[#1C202B]">
+          <h3 className="text-xs font-medium text-zinc-100 flex items-center gap-2">
+            <Radio className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Bale Bot Webhook Registration</span>
+          </h3>
+          <p className="text-[11px] text-zinc-500">
+            Send setWebhook payload to official Bale server with signature token verification.
+          </p>
+        </div>
+
+        <form onSubmit={handleSetBaleWebhook} className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+          <div className="sm:col-span-6">
+            <label className="block text-[11px] font-mono text-zinc-400 mb-1">Webhook URL:</label>
+            <input
+              type="url"
+              placeholder="https://your-domain.com/api/webhooks/bale"
+              value={baleWebhookUrl}
+              onChange={(e) => setBaleWebhookUrl(e.target.value)}
+              className="w-full bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
+            />
+          </div>
+
+          <div className="sm:col-span-4">
+            <label className="block text-[11px] font-mono text-zinc-400 mb-1">Secret Token (optional):</label>
+            <input
+              type="text"
+              placeholder="bale_secret_hash"
+              value={baleSecretToken}
+              onChange={(e) => setBaleSecretToken(e.target.value)}
+              className="w-full bg-[#10131A] border border-[#1C202B] rounded-md px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
+            />
+          </div>
+
+          <div className="sm:col-span-2 flex items-end">
+            <button
+              type="submit"
+              disabled={isSettingWebhook || !baleWebhookUrl.trim()}
+              className="w-full py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-zinc-200 border border-white/[0.08] text-xs font-medium transition-all cursor-pointer disabled:opacity-40"
+            >
+              {isSettingWebhook ? 'Registering...' : 'Set Webhook'}
+            </button>
+          </div>
+        </form>
+
+        {webhookFeedback && (
+          <div className={`p-2 rounded-md border text-xs flex items-center gap-2 ${
+            webhookFeedback.success
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+          }`}>
+            {webhookFeedback.success ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+            <span>{webhookFeedback.msg}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Integrations & MCP Studio */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {/* GitHub Repository */}
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-300">
-                <Lock className="w-3.5 h-3.5" />
-              </div>
-              <div>
-                <h3 className="text-xs font-semibold text-white font-sans">دامنه یادداشت و حساب‌کتاب شخصی (bale-auto)</h3>
-                <span className="text-[10px] font-mono text-emerald-400">سیاست حریم خصوصی صفر (Zero-Retention Ephemeral)</span>
-              </div>
+              <GitBranch className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="text-xs font-medium text-zinc-200 font-mono">GitHub Integration</span>
             </div>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
-              کاملاً خصوصی
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+              Synced
             </span>
           </div>
-
-          <p className="text-[11px] text-zinc-400 leading-relaxed font-sans">
-            در این دامنه، هیچ داده‌ای خارج از عرف ثبت نمی‌شود. پردازش در حافظه فرار رم با TTL صورت گرفته، صف بازبینی سایه بایپس می‌شود تا پاسخ به سرعت برسد و متن خام بلافاصله پاکسازی می‌گردد.
-          </p>
-
-          <div className="grid grid-cols-2 gap-2 pt-1 text-[10px] font-mono">
-            <div className="p-2 rounded-xl bg-black/40 border border-white/[0.04]">
-              <span className="text-zinc-500 block">لاگ در پایگاه داده:</span>
-              <span className="text-emerald-400 font-semibold">مسدود (No-Log)</span>
-            </div>
-            <div className="p-2 rounded-xl bg-black/40 border border-white/[0.04]">
-              <span className="text-zinc-500 block">رفتار سایه:</span>
-              <span className="text-emerald-400 font-semibold">ارسال آنی (Bypass)</span>
-            </div>
+          <div className="p-2 rounded-md bg-black/40 border border-[#1C202B] text-[11px] font-mono text-zinc-300 flex justify-between" dir="ltr">
+            <span>hosseintajdari/bale-panel</span>
+            <span className="text-zinc-500">branch: main</span>
           </div>
         </div>
 
-        {/* bale-med Audited Clinical Card */}
-        <div className="p-4 rounded-3xl backdrop-blur-2xl bg-gradient-to-br from-sky-950/20 to-white/[0.02] border border-sky-500/20 space-y-3">
+        {/* Notion Workspace */}
+        <div className="p-3 rounded-lg bg-[#0A0C10] border border-[#1C202B] space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-300">
-                <ShieldAlert className="w-3.5 h-3.5" />
-              </div>
-              <div>
-                <h3 className="text-xs font-semibold text-white font-sans">دامنه بالینی و استعلام دارو (bale-med)</h3>
-                <span className="text-[10px] font-mono text-sky-400">سیاست حسابرسی و رگولاتوری (Audited Clinical Ledger)</span>
-              </div>
+              <FileText className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="text-xs font-medium text-zinc-200 font-mono">Notion MCP Proxy</span>
             </div>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-mono">
-              الزام رگولاتوری
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+              Connected
             </span>
           </div>
-
-          <p className="text-[11px] text-zinc-400 leading-relaxed font-sans">
-            به علت قوانین درمان و سلامت، خطوط قرمز تریاژ و قیمت مصوب با موتورهای قطعی (Qanoon-Price) محاسبه شده و برای پاسخ‌های پرریسک، تایید داروساز (HITL) در صف سایه الزامی است.
-          </p>
-
-          <div className="grid grid-cols-2 gap-2 pt-1 text-[10px] font-mono">
-            <div className="p-2 rounded-xl bg-black/40 border border-white/[0.04]">
-              <span className="text-zinc-500 block">ردپای حسابرسی:</span>
-              <span className="text-sky-300 font-semibold">ثبت رویداد (Audit Trail)</span>
-            </div>
-            <div className="p-2 rounded-xl bg-black/40 border border-white/[0.04]">
-              <span className="text-zinc-500 block">تایید داروساز:</span>
-              <span className="text-amber-300 font-semibold">الزامی در خطر بالا</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-      {/* 3. AI Providers: Direct API vs Flat-fee Subscriptions + Pipeline Permissions */}
-      <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.06] pb-3">
-          <div>
-            <h3 className="text-sm font-semibold text-white font-sans flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-purple-400" />
-              <span>ارکستراسیون منابع هوش مصنوعی (Dual AI Provider)</span>
-            </h3>
-            <p className="text-xs text-zinc-400 font-sans mt-0.5">
-              امکان انتخاب میان کلیدهای مستقیم API (هزینه به ازای مصرف) و اکانت‌های اشتراکی ماهانه (Codex / ChatGPT Plus) برای کاهش هزینه‌ها.
-            </p>
-          </div>
-        </div>
-
-        {/* Provider Switcher Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <button
-            onClick={() => handleToggleProvider('gemini_direct')}
-            className={`p-3.5 rounded-2xl border text-right transition-all cursor-pointer ${
-              data.activeAiProvider === 'gemini_direct'
-                ? 'bg-purple-600/15 border-purple-500/40 text-white shadow-[0_0_20px_rgba(168,85,247,0.15)]'
-                : 'bg-black/30 border-white/[0.06] text-zinc-400 hover:text-white'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold text-white">Google GenAI Direct API</span>
-              {data.activeAiProvider === 'gemini_direct' && <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />}
-            </div>
-            <p className="text-[11px] text-zinc-400 font-sans">
-              اتصال مستقیم به Gemini 3.7 / 2.5 Flash با سرعت بالا و تاخیر حداقل.
-            </p>
-            <span className="inline-block mt-2 text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.04] text-purple-300">
-              process.env.GEMINI_API_KEY
-            </span>
-          </button>
-
-          <button
-            onClick={() => handleToggleProvider('codex_account_proxy')}
-            className={`p-3.5 rounded-2xl border text-right transition-all cursor-pointer ${
-              data.activeAiProvider === 'codex_account_proxy'
-                ? 'bg-purple-600/15 border-purple-500/40 text-white shadow-[0_0_20px_rgba(168,85,247,0.15)]'
-                : 'bg-black/30 border-white/[0.06] text-zinc-400 hover:text-white'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold text-white">Codex / Copilot Account Proxy</span>
-              {data.activeAiProvider === 'codex_account_proxy' && <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />}
-            </div>
-            <p className="text-[11px] text-zinc-400 font-sans">
-              استفاده از اشتراک ماهانه متصل، بدون کسر توکن شخصی از API.
-            </p>
-            <span className="inline-block mt-2 text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.04] text-purple-300">
-              OAuth Token / Subscription Bridge
-            </span>
-          </button>
-
-          <button
-            onClick={() => handleToggleProvider('chatgpt_subscription')}
-            className={`p-3.5 rounded-2xl border text-right transition-all cursor-pointer ${
-              data.activeAiProvider === 'chatgpt_subscription'
-                ? 'bg-purple-600/15 border-purple-500/40 text-white shadow-[0_0_20px_rgba(168,85,247,0.15)]'
-                : 'bg-black/30 border-white/[0.06] text-zinc-400 hover:text-white'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold text-white">ChatGPT Plus / Session Account</span>
-              {data.activeAiProvider === 'chatgpt_subscription' && <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />}
-            </div>
-            <p className="text-[11px] text-zinc-400 font-sans">
-              پل ارتباطی نشست وب برای انجام تسک‌های عمومی دوستان و دستیاران.
-            </p>
-            <span className="inline-block mt-2 text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.04] text-purple-300">
-              Session Cookie / Reverse Proxy
-            </span>
-          </button>
-        </div>
-
-        {/* Pipeline Permissions Gate */}
-        <div className="pt-2">
-          <span className="text-[11px] font-semibold text-zinc-300 block mb-2 font-sans">
-            کنترل مجوزهای خط لوله برای ایجنت‌ها (Pipeline Permission Gate):
-          </span>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => handleTogglePermission('allowDeterministicPricing')}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-mono flex items-center gap-2 cursor-pointer transition-all ${
-                data.pipelinePermissions.allowDeterministicPricing
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  : 'bg-black/30 border-white/[0.06] text-zinc-500'
-              }`}
-            >
-              <span>موتور قیمت‌گذاری قطعی (Qanoon-Price)</span>
-              <span className="text-[10px]">{data.pipelinePermissions.allowDeterministicPricing ? 'مجاز' : 'مسدود'}</span>
-            </button>
-
-            <button
-              onClick={() => handleTogglePermission('allowDatabaseMutation')}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-mono flex items-center gap-2 cursor-pointer transition-all ${
-                data.pipelinePermissions.allowDatabaseMutation
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  : 'bg-black/30 border-white/[0.06] text-zinc-500'
-              }`}
-            >
-              <span>تغییر در پایگاه داده سشن‌ها</span>
-              <span className="text-[10px]">{data.pipelinePermissions.allowDatabaseMutation ? 'مجاز' : 'مسدود'}</span>
-            </button>
-
-            <button
-              onClick={() => handleTogglePermission('allowWebScraping')}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-mono flex items-center gap-2 cursor-pointer transition-all ${
-                data.pipelinePermissions.allowWebScraping
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  : 'bg-black/30 border-white/[0.06] text-zinc-500'
-              }`}
-            >
-              <span>ابزارهای وب‌اسکرپینگ و جستجو</span>
-              <span className="text-[10px]">{data.pipelinePermissions.allowWebScraping ? 'مجاز' : 'مسدود'}</span>
-            </button>
+          <div className="p-2 rounded-md bg-black/40 border border-[#1C202B] text-[11px] font-mono text-zinc-300 flex justify-between" dir="ltr">
+            <span>Embednet Workspace</span>
+            <span className="text-zinc-500">OAuth Local Proxy</span>
           </div>
         </div>
       </div>
-      </>
-      )}
-
-      {/* VIEW 3: GUEST SANDBOXES & REPO/NOTION STUDIO */}
-      {integrationsSubView === 'guest-sandboxes' && (
-        <>
-          {/* 4. Manager Studio: Notion & GitHub Integrations */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        
-        {/* GitHub OAuth Connection */}
-        <div className="p-4 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-white/[0.06] border border-white/[0.1] flex items-center justify-center text-white">
-                <GitBranch className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-xs font-semibold text-white font-sans">اتصال مخزن گیت‌هاب (GitHub OAuth)</h4>
-                <p className="text-[10px] text-zinc-400 font-mono">همگام‌سازی ADRها، پایپ‌لاین‌ها و داکر فایل‌ها</p>
-              </div>
-            </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              متصل
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05] text-xs font-mono text-zinc-300 flex items-center justify-between">
-            <span>{data.github.repo} ({data.github.branch})</span>
-            <span className="text-[10px] text-zinc-500">آخرین سینک: {data.github.lastSync}</span>
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] pt-1">
-            <span className="text-zinc-400 font-sans">روش احراز: توکن امن OAuth کلاینت</span>
-            <button className="text-sky-400 hover:text-sky-300 font-mono text-[11px] flex items-center gap-1 cursor-pointer">
-              <span>تست سینک</span>
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-
-        {/* Notion Workspace Connection */}
-        <div className="p-4 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-white/[0.06] border border-white/[0.1] flex items-center justify-center text-white">
-                <FileText className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-xs font-semibold text-white font-sans">اتصال فضای کار نوشن (Notion OAuth)</h4>
-                <p className="text-[10px] text-zinc-400 font-mono">ثبت خودکار گزارشات اجرایی و پایگاه یادداشت‌ها</p>
-              </div>
-            </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              متصل
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05] text-xs font-mono text-zinc-300 flex items-center justify-between">
-            <span>{data.notion.workspace}</span>
-            <span className="text-[10px] text-zinc-500">آخرین سینک: {data.notion.lastSync}</span>
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] pt-1">
-            <span className="text-zinc-400 font-sans">پایگاه داده متصل: Work Ledger & Tasks</span>
-            <button className="text-sky-400 hover:text-sky-300 font-mono text-[11px] flex items-center gap-1 cursor-pointer">
-              <span>سینک جداول</span>
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-
-      </div>
-
-      {/* 5. Guest Sandboxes: Isolated Agents for Friends & Colleague Bots */}
-      <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.06] pb-3">
-          <div>
-            <h3 className="text-sm font-semibold text-white font-sans flex items-center gap-2">
-              <UserPlus className="w-4 h-4 text-emerald-400" />
-              <span>سندباکس ایجنت‌های دوستان و مهمانان (Multi-Tenant Sandboxes)</span>
-            </h3>
-            <p className="text-xs text-zinc-400 font-sans mt-0.5">
-              ایجاد بات و ایجنت اختصاصی برای دوستان و همکاران. داده‌ها، حافظه و تنظیمات آن‌ها در پارتیشن کاملاً ایزوله ذخیره شده و به هیچ‌وجه به داده‌ها، پرامپت‌ها و اطلاعات شما دسترسی ندارند.
-            </p>
-          </div>
-        </div>
-
-        {/* Existing Sandboxes */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {data.guestSandboxes.map((sbx) => (
-            <div
-              key={sbx.id}
-              className="p-3.5 rounded-2xl bg-black/30 border border-white/[0.06] space-y-2 text-right"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-white font-sans">{sbx.guestName}</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                  {sbx.status === 'active' ? 'فعال' : 'متوقف'}
-                </span>
-              </div>
-              <div className="text-[11px] font-mono text-zinc-300">{sbx.assignedBot}</div>
-              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500 pt-1 border-t border-white/[0.04]">
-                <span>مسیر حافظه ایزوله: {sbx.isolatedMemoryPath}</span>
-                <span className="text-purple-300">{sbx.quotaUsed}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Quick Add Guest Sandbox */}
-        <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06] flex flex-col sm:flex-row items-center gap-2.5">
-          <input
-            type="text"
-            placeholder="نام دوست یا مهمان (مثلاً نیما دستیار شخصی)"
-            value={newGuestName}
-            onChange={(e) => setNewGuestName(e.target.value)}
-            className="flex-1 bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/20 font-sans"
-          />
-          <input
-            type="text"
-            placeholder="شناسه بات (مثلاً Telegram @nima_bot)"
-            value={newGuestBot}
-            onChange={(e) => setNewGuestBot(e.target.value)}
-            className="flex-1 bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/20 font-sans"
-          />
-          <button
-            onClick={handleCreateSandbox}
-            disabled={isCreatingSandbox || !newGuestName.trim()}
-            className="px-4 py-2 rounded-xl bg-white/[0.12] hover:bg-white/[0.18] text-white text-xs font-semibold font-sans transition-all cursor-pointer whitespace-nowrap disabled:opacity-40"
-          >
-            {isCreatingSandbox ? 'در حال ایجاد...' : 'ایجاد ایجنت ایزوله'}
-          </button>
-        </div>
-      </div>
-      </>
-      )}
-
     </div>
   );
-};
+});
 
+McpAccountsGrid.displayName = 'McpAccountsGrid';

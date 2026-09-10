@@ -1319,6 +1319,71 @@ app.post("/api/evolution/antiban", (req, res) => {
   res.json({ success: true, antiBan: evolutionInstanceState.antiBan });
 });
 
+// Evolution Inbound Simulation Endpoint
+app.post("/api/evolution/inbound-message", async (req, res) => {
+  try {
+    const { senderPhone, senderName, messageText, isInitiatedByCounterparty = true } = req.body;
+    if (!messageText || !messageText.trim()) {
+      return res.status(400).json({ error: "متن پیام الزامی است." });
+    }
+
+    // Anti-ban rule 1: Strict Inbound Check
+    if (evolutionInstanceState.antiBan.strictInboundOnly && !isInitiatedByCounterparty) {
+      return res.status(403).json({
+        error: "ارسال مسدود شد: سپر ضد مسدودی حساب (Strict Inbound Only) از ارسال پیام سرآغاز به افراد غریبه جلوگیری می‌کند.",
+      });
+    }
+
+    const ledgerId = `wld-${Date.now()}`;
+    const jitterSec = Math.floor(
+      Math.random() *
+        (evolutionInstanceState.antiBan.humanJitterMaxSec -
+          evolutionInstanceState.antiBan.humanJitterMinSec +
+          1) +
+        evolutionInstanceState.antiBan.humanJitterMinSec
+    );
+
+    // Anti-ban rule 2: Persist in ledger first if configured
+    if (evolutionInstanceState.antiBan.persistLedgerFirst) {
+      serverLedgerItems.unshift({
+        id: ledgerId,
+        title: `پیام ورودی واتساپ: ${senderName || "کاربر ناشناس"} (${senderPhone || "بدون شماره"})`,
+        domainCategory: evolutionInstanceState.mode === "pharmacy_inbound" ? "Pharmacy" : "Personal",
+        summary: messageText.slice(0, 80),
+        activeContext: "درگاه Evolution API",
+        tasksPending: 0,
+        lastUpdated: "هم‌اکنون",
+        tokenLoad: "48 توکن",
+      });
+      evolutionInstanceState.lastPersistedLedgerId = ledgerId;
+    }
+
+    evolutionInstanceState.lastInboundAt = "هم‌اکنون";
+    evolutionInstanceState.antiBan.messagesSentToday += 1;
+
+    // Send to shadow queue pipeline
+    const pipelineRes = await processPipelineMessage(
+      "whatsapp",
+      senderPhone || "wa-user",
+      senderName || "مخاطب واتساپ",
+      messageText,
+      evolutionInstanceState.mode === "pharmacy_inbound" ? "Clinical" : "Executive",
+      "shadow"
+    );
+
+    res.json({
+      success: true,
+      persistedInLedgerId: ledgerId,
+      humanJitterDelaySec: jitterSec,
+      reply: pipelineRes.record.proposedReply,
+      shadowRecord: pipelineRes.record,
+    });
+  } catch (err: any) {
+    console.error("Evolution inbound error:", err);
+    res.status(500).json({ error: err.message || "خطا در پردازش پیام ورودی واتساپ" });
+  }
+});
+
 // Endpoints for Work Ledger
 app.get("/api/ledger/items", (req, res) => {
   res.json({ success: true, items: serverLedgerItems });

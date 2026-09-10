@@ -1,6 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WorkLedgerItem, GlobalPrivacySettings } from '../types';
-import { BookMarked, CheckCircle2, Clock, Sparkles, Filter, Plus, ArrowUpRight, Shield, ShieldCheck, Database, Sliders } from 'lucide-react';
+import {
+  BookMarked,
+  Clock,
+  Plus,
+  ShieldCheck,
+  Database,
+  Sliders,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  Cpu,
+  CheckCircle2,
+  X,
+} from 'lucide-react';
 
 interface WorkLedgerPanelProps {
   privacySettings?: GlobalPrivacySettings;
@@ -56,6 +69,10 @@ export const WorkLedgerPanel: React.FC<WorkLedgerPanelProps> = ({
 }) => {
   const [ledger, setLedger] = useState<WorkLedgerItem[]>(INITIAL_LEDGER);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // New Session State
   const [newTitle, setNewTitle] = useState('');
   const [newSummary, setNewSummary] = useState('');
   const [newCategory, setNewCategory] = useState<'Executive' | 'Operations' | 'Clinical' | 'Personal'>('Executive');
@@ -73,13 +90,21 @@ export const WorkLedgerPanel: React.FC<WorkLedgerPanelProps> = ({
     }
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     fetchLedger();
   }, []);
 
-  const filtered = ledger.filter(
-    (item) => selectedCategory === 'all' || item.domainCategory === selectedCategory
-  );
+  const filtered = ledger.filter((item) => {
+    const matchesCat = selectedCategory === 'all' || item.domainCategory === selectedCategory;
+    const query = searchQuery.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      item.title.toLowerCase().includes(query) ||
+      item.summary.toLowerCase().includes(query) ||
+      item.activeContext.toLowerCase().includes(query) ||
+      item.id.toLowerCase().includes(query);
+    return matchesCat && matchesSearch;
+  });
 
   const handleAddSession = async () => {
     if (!newTitle.trim()) return;
@@ -106,174 +131,290 @@ export const WorkLedgerPanel: React.FC<WorkLedgerPanelProps> = ({
     setIsAdding(false);
   };
 
+  const getDomainBadge = (category: WorkLedgerItem['domainCategory']) => {
+    switch (category) {
+      case 'Executive':
+        return 'bg-purple-500/15 text-purple-300 border-purple-500/25';
+      case 'Clinical':
+        return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25';
+      case 'Operations':
+        return 'bg-blue-500/15 text-blue-300 border-blue-500/25';
+      case 'Personal':
+        return 'bg-amber-500/15 text-amber-300 border-amber-500/25';
+      default:
+        return 'bg-zinc-500/15 text-zinc-300 border-zinc-500/25';
+    }
+  };
+
+  const totalPendingTasks = filtered.reduce((sum, item) => sum + (item.tasksPending || 0), 0);
+
   return (
-    <div className="space-y-4">
-      {/* Top Banner & Control */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
-        <div>
-          <h2 className="text-sm font-semibold text-white tracking-tight font-sans flex items-center space-x-2">
-            <BookMarked className="w-4 h-4 text-zinc-300 ml-2" />
-            <span>دفتر کار و زمینه سشن‌ها (Executive Work Ledger)</span>
-          </h2>
+    <div className="space-y-2.5" dir="rtl">
+      {/* Top Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-xl bg-[#0D111A] border border-[#1E2538]">
+        <div className="flex items-center gap-2.5">
+          <BookMarked className="w-4 h-4 text-sky-400" />
+          <div>
+            <h2 className="text-xs font-semibold text-white tracking-tight">
+              دفتر کارکرد و حسابرسی سشن‌ها (Executive WorkLedger Audit)
+            </h2>
+          </div>
+          <span className="text-[10px] font-mono text-zinc-400 bg-white/[0.04] px-2 py-0.5 rounded border border-white/[0.06]">
+            {filtered.length} سشن • {totalPendingTasks} تسک در جریان
+          </span>
         </div>
 
-        <div className="flex items-center space-x-2">
-          {/* Category Filter */}
-          <div className="flex items-center space-x-1 bg-black/30 p-1 rounded-2xl border border-white/[0.06] text-xs">
+        {/* Search & Action Controls */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Search Box */}
+          <div className="relative">
+            <Search className="w-3 h-3 text-zinc-500 absolute right-2.5 top-2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="جستجو در عناوین و لاگ‌ها..."
+              className="bg-black/50 border border-white/[0.08] rounded-lg pr-7 pl-2.5 py-1 text-[11px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-sky-500/40 w-44 sm:w-56"
+            />
+          </div>
+
+          {/* Category Filter Pills */}
+          <div className="flex items-center bg-black/40 p-0.5 rounded-lg border border-white/[0.06] text-xs">
             {['all', 'Executive', 'Clinical', 'Operations', 'Personal'].map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1 rounded-xl transition-all cursor-pointer text-xs font-sans ${
+                className={`px-2 py-0.5 rounded text-[11px] font-mono cursor-pointer transition-colors ${
                   selectedCategory === cat
-                    ? 'bg-white/[0.12] text-white border border-white/[0.12]'
+                    ? 'bg-white/[0.12] text-white'
                     : 'text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                {cat === 'all' ? 'همه حوزه‌ها' : cat}
+                {cat === 'all' ? 'همه' : cat}
               </button>
             ))}
           </div>
 
           <button
             onClick={() => setIsAdding(!isAdding)}
-            className="px-3.5 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.12] text-white text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
+            className="px-2.5 py-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] border border-white/[0.12] text-white text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3 h-3" />
             <span>سشن جدید</span>
           </button>
         </div>
       </div>
 
-      {/* Global Data Retention & Privacy Status Strip in WorkLedger */}
+      {/* Retention Policy Mini Strip */}
       {privacySettings && (
-        <div className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-          privacySettings.retentionPolicy === 'ephemeral'
-            ? 'bg-emerald-500/[0.06] border-emerald-500/25 text-emerald-300'
-            : 'bg-indigo-500/[0.06] border-indigo-500/25 text-indigo-300'
-        }`}>
-          <div className="flex items-center space-x-2.5 space-x-reverse">
+        <div className="px-3 py-2 rounded-xl bg-[#0A0E17] border border-white/[0.06] flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
             {privacySettings.retentionPolicy === 'ephemeral' ? (
-              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             ) : (
-              <Database className="w-5 h-5 text-indigo-400 shrink-0" />
+              <Database className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
             )}
-            <div className="text-xs">
-              <span className="font-semibold text-white block">
-                {privacySettings.retentionPolicy === 'ephemeral'
-                  ? 'سیاست سشن‌های موقت (Ephemeral Mode - Zero Retention) فعال است'
-                  : 'سیاست ثبت متادیتا در دفتر کار (WorkLedger Audit Logging) فعال است'}
-              </span>
-              <p className="text-[11px] text-zinc-400 mt-0.5">
-                {privacySettings.retentionPolicy === 'ephemeral'
-                  ? 'تعاملات ربات‌های پزشکی و مشاوره‌های حساس در دیتابیس پایدار نمی‌شوند و تنها در RAM اجرا شده‌اند.'
-                  : 'متادیتا، خلاصه استعلام و بار محاسباتی توکن‌های خط لوله به‌صورت خودکار در این دفتر کار نمایه می‌شوند.'}
-              </p>
-            </div>
+            <span className="text-[11px] text-zinc-300 font-mono">
+              سیاست داده: <strong className="text-white">{privacySettings.retentionPolicy === 'ephemeral' ? 'سشن موقت (Zero-Retention)' : 'ثبت کامل در دفتر کار (Audited)'}</strong>
+            </span>
           </div>
 
           {onOpenSettings && (
             <button
               onClick={onOpenSettings}
-              className="flex items-center space-x-1 space-x-reverse text-xs bg-white/[0.06] hover:bg-white/[0.12] px-3 py-1.5 rounded-xl border border-white/[0.1] text-zinc-200 transition-colors shrink-0 cursor-pointer"
+              className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 font-mono transition-colors cursor-pointer"
             >
-              <Sliders className="w-3.5 h-3.5 text-zinc-400" />
-              <span>مدیریت سیاست نگهداری</span>
+              <Sliders className="w-2.5 h-2.5" />
+              <span>تنظیم سیاست</span>
             </button>
           )}
         </div>
       )}
 
-      {/* New Session Drawer/Form */}
+      {/* Add New Session Drawer */}
       {isAdding && (
-        <div className="p-4 rounded-3xl backdrop-blur-2xl bg-white/[0.04] border border-white/[0.12] shadow-xl space-y-3">
+        <div className="p-3 rounded-xl bg-[#0F131E] border border-sky-500/30 space-y-2 text-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-white font-sans">ثبت مدخل جدید در دفتر کار سشن‌ها</span>
+            <span className="font-semibold text-white text-[11px]">ثبت مدخل جدید در دفتر کار سشن‌ها</span>
             <select
               value={newCategory}
               onChange={(e) => setNewCategory(e.target.value as any)}
-              className="bg-black/50 border border-white/10 rounded-xl px-3 py-1 text-xs text-zinc-200"
+              className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-[11px] text-zinc-200"
             >
-              <option value="Executive">Executive (مدیریت ارشد)</option>
-              <option value="Clinical">Clinical (بالینی و سلامت)</option>
-              <option value="Operations">Operations (عملیات و لاجستیک)</option>
-              <option value="Personal">Personal (اتوماسیون فردی)</option>
+              <option value="Executive">Executive</option>
+              <option value="Clinical">Clinical</option>
+              <option value="Operations">Operations</option>
+              <option value="Personal">Personal</option>
             </select>
           </div>
 
-          <input
-            type="text"
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            placeholder="عنوان سشن یا تسک کاری..."
-            className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/20 font-sans"
-          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <input
+              type="text"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="عنوان سشن یا تسک کاری..."
+              className="bg-black/50 border border-white/[0.08] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500/40"
+            />
+            <input
+              type="text"
+              value={newSummary}
+              onChange={(e) => setNewSummary(e.target.value)}
+              placeholder="خلاصه اقدامات یا نیازمندی‌های این سشن..."
+              className="bg-black/50 border border-white/[0.08] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500/40"
+            />
+          </div>
 
-          <textarea
-            rows={2}
-            value={newSummary}
-            onChange={(e) => setNewSummary(e.target.value)}
-            placeholder="خلاصه بافت و نیازمندی‌های این نشست..."
-            className="w-full bg-black/40 border border-white/[0.08] rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans resize-none"
-          />
-
-          <div className="flex items-center justify-end space-x-2 pt-1">
+          <div className="flex items-center justify-end gap-2 pt-1">
             <button
               onClick={() => setIsAdding(false)}
-              className="px-3 py-1 rounded-xl bg-white/[0.05] text-zinc-400 text-xs cursor-pointer"
+              className="px-2.5 py-0.5 rounded bg-white/5 text-zinc-400 text-[11px] hover:bg-white/10 cursor-pointer"
             >
               انصراف
             </button>
             <button
               onClick={handleAddSession}
               disabled={!newTitle.trim()}
-              className="px-4 py-1 rounded-xl bg-white/[0.15] hover:bg-white/[0.25] text-white text-xs font-medium cursor-pointer disabled:opacity-50"
+              className="px-3 py-1 rounded bg-sky-600/30 hover:bg-sky-600/50 border border-sky-500/40 text-sky-200 text-[11px] font-medium cursor-pointer disabled:opacity-50"
             >
-              افزودن به دفتر کار
+              ثبت در دیتابیس
             </button>
           </div>
         </div>
       )}
 
-      {/* Grid of Work Ledger Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {filtered.map((item) => (
-          <div
-            key={item.id}
-            className="p-4 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.07] hover:border-white/[0.14] transition-all space-y-3"
-          >
-            {/* Top Bar */}
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.08]">
-                {item.domainCategory}
-              </span>
-              <div className="flex items-center space-x-2 text-[11px] font-mono text-zinc-400">
-                <Clock className="w-3 h-3 mr-1 inline" />
-                <span>{item.lastUpdated}</span>
-              </div>
-            </div>
+      {/* Data-Dense Tabular Audit View */}
+      <div className="rounded-xl bg-[#0D111A] border border-[#1E2538] overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-right text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-white/[0.08] bg-black/40 text-zinc-400 text-[10px] font-mono">
+                <th className="py-2 px-3 font-medium">شناسه</th>
+                <th className="py-2 px-3 font-medium">حوزه</th>
+                <th className="py-2 px-3 font-medium">عنوان سشن / شرح</th>
+                <th className="py-2 px-3 font-medium hidden md:table-cell">بافت فعال</th>
+                <th className="py-2 px-3 font-medium text-center">تسک‌ها</th>
+                <th className="py-2 px-3 font-medium text-center">بار محاسباتی</th>
+                <th className="py-2 px-3 font-medium text-left">آخرین به‌روزرسانی</th>
+                <th className="py-2 px-2 text-center w-8"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.04]">
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-zinc-500 text-xs font-mono">
+                    هیچ سشنی مطابق با فیلتر فعلی یافت نشد.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => {
+                  const isExpanded = expandedId === item.id;
+                  return (
+                    <React.Fragment key={item.id}>
+                      <tr
+                        onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                        className={`transition-colors cursor-pointer hover:bg-white/[0.03] ${
+                          isExpanded ? 'bg-[#111726]' : ''
+                        }`}
+                      >
+                        {/* ID */}
+                        <td className="py-2 px-3 font-mono text-[10px] text-zinc-400 whitespace-nowrap">
+                          {item.id}
+                        </td>
 
-            {/* Title & Summary */}
-            <div>
-              <h3 className="text-xs font-semibold text-white tracking-tight font-sans">
-                {item.title}
-              </h3>
-              <p className="text-[11px] text-zinc-400 leading-relaxed font-sans mt-1.5">
-                {item.summary}
-              </p>
-            </div>
+                        {/* Domain Category Badge */}
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <span
+                            className={`inline-block px-1.5 py-0.2 rounded border text-[10px] font-mono ${getDomainBadge(
+                              item.domainCategory
+                            )}`}
+                          >
+                            {item.domainCategory}
+                          </span>
+                        </td>
 
-            {/* Context & Metadata Footer */}
-            <div className="pt-2.5 border-t border-white/[0.05] flex items-center justify-between text-[10px] font-mono text-zinc-400">
-              <span className="truncate max-w-[200px]">بافت: {item.activeContext}</span>
-              <div className="flex items-center space-x-2">
-                <span className="text-zinc-400">تسک‌ها: {item.tasksPending}</span>
-                <span className="text-zinc-300 font-semibold">{item.tokenLoad}</span>
-              </div>
-            </div>
-          </div>
-        ))}
+                        {/* Title & Preview */}
+                        <td className="py-2 px-3 max-w-xs sm:max-w-md">
+                          <div className="font-medium text-zinc-100 text-[11px] truncate">
+                            {item.title}
+                          </div>
+                          <div className="text-[10px] text-zinc-500 truncate mt-0.5">
+                            {item.summary}
+                          </div>
+                        </td>
+
+                        {/* Context */}
+                        <td className="py-2 px-3 hidden md:table-cell text-zinc-400 text-[11px] truncate max-w-[180px]">
+                          {item.activeContext}
+                        </td>
+
+                        {/* Pending Tasks */}
+                        <td className="py-2 px-3 text-center whitespace-nowrap">
+                          {item.tasksPending > 0 ? (
+                            <span className="inline-block px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25 font-mono text-[10px] font-bold">
+                              {item.tasksPending}
+                            </span>
+                          ) : (
+                            <span className="inline-block px-1.5 py-0.2 rounded bg-white/[0.04] text-zinc-500 font-mono text-[10px]">
+                              ۰
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Token Load */}
+                        <td className="py-2 px-3 text-center whitespace-nowrap font-mono text-[11px] text-zinc-300">
+                          {item.tokenLoad}
+                        </td>
+
+                        {/* Last Updated */}
+                        <td className="py-2 px-3 text-left whitespace-nowrap text-zinc-500 font-mono text-[10px]">
+                          {item.lastUpdated}
+                        </td>
+
+                        {/* Expand Chevron */}
+                        <td className="py-2 px-2 text-center text-zinc-500">
+                          {isExpanded ? (
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* Expanded Details Row */}
+                      {isExpanded && (
+                        <tr className="bg-[#0B0F19] border-t border-b border-sky-500/20">
+                          <td colSpan={8} className="p-3">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                              <div className="space-y-1 p-2.5 rounded bg-black/40 border border-white/[0.05]">
+                                <span className="text-[10px] font-mono text-zinc-400 block">شرح کامل سشن:</span>
+                                <p className="text-[11px] text-zinc-200 leading-relaxed font-sans select-text">
+                                  {item.summary}
+                                </p>
+                              </div>
+                              <div className="space-y-1 p-2.5 rounded bg-black/40 border border-white/[0.05]">
+                                <span className="text-[10px] font-mono text-zinc-400 block">بافت و ارجاع اجرایی:</span>
+                                <p className="text-[11px] text-zinc-200 leading-relaxed font-sans select-text">
+                                  {item.activeContext}
+                                </p>
+                                <div className="pt-2 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                                  <span>شناسه رهگیری: {item.id}</span>
+                                  <span>تسک‌های باز: {item.tasksPending} مورد</span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 };
+
