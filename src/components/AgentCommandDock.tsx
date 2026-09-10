@@ -62,10 +62,11 @@ export const AgentCommandDock: React.FC<AgentCommandDockProps> = ({
         <div className="flex-1 relative flex items-center">
           <input
             type="text"
+            dir="auto"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="What should we tackle? (Ask anything, @ to mention, / for actions)"
+            placeholder="Start with a goal..."
             className="w-full bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none font-sans px-2 py-1"
           />
         </div>

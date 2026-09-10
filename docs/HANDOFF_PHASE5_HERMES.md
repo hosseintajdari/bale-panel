@@ -12,9 +12,9 @@ Migrating `bale-panel` from a dense, operational dashboard (with scattered Persi
 - **Status Bar Integration**: Embedded the channel latency status directly into the minimalist `App.tsx` footer (Antigravity Cockpit Style), separating the chat interface from system telemetry.
 
 ## 3. Future Goals (Next Sessions)
-- **Phase 2: Floating Command Bar**: Replace the static center payload box in `PipelineConsole` with a floating prompt bar at the bottom (`Start with a goal`).
-- **Phase 3: Progressive Disclosure**: Hide presets and execution traces behind collapsible panels or a Command Palette (`Ctrl+K`).
-- **Phase 4: Component Architecture**: Separate Chat/Input UI from Pipeline Execution logs, and strictly wrap Persian output in isolated `<div dir="rtl">` cards.
+- **Phase 2: Floating Command Bar**: Replace the static center payload box in `PipelineConsole` with a floating prompt bar at the bottom (`Start with a goal`). ✅
+- **Phase 3: Progressive Disclosure**: Hide presets and execution traces behind collapsible panels or a Command Palette (`Ctrl+K`). ✅
+- **Phase 4: Component Architecture**: Separate Chat/Input UI from Pipeline Execution logs, and strictly wrap Persian output in isolated `<div dir="rtl">` cards. ✅
 
 ## 4. Required Skills for Next Phases
 > [!IMPORTANT]

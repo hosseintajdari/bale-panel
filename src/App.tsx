@@ -13,6 +13,7 @@ import { GatewayHistoryTab } from './components/GatewayHistoryTab';
 import { TelegramManager } from './components/TelegramManager';
 import { AgentCommandDock } from './components/AgentCommandDock';
 import { Zap } from 'lucide-react';
+import { CommandPalette } from './components/CommandPalette';
 import { ChannelPlatform, ChannelGatewayStatus, ShadowReviewItem, PipelineTraceStep, GlobalPrivacySettings, GatewayPulseConfig } from './types';
 import { authFetch } from './utils/api';
 
@@ -65,6 +66,9 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState('tg-gateway-migration');
 
+  const [latestPipelineTrace, setLatestPipelineTrace] = useState<PipelineTraceStep[] | null>(null);
+  const [latestPipelineRecord, setLatestPipelineRecord] = useState<ShadowReviewItem | null>(null);
+
   const handleSendMessageFromDock = useCallback(async (message: string, model: string) => {
     try {
       const res = await authFetch('/api/pipeline/process', {
@@ -82,6 +86,10 @@ export default function App() {
         const data = await res.json();
         if (data.shadowRecord) {
           setShadowQueue((prev) => [data.shadowRecord, ...prev]);
+          setLatestPipelineRecord(data.shadowRecord);
+        }
+        if (data.trace) {
+          setLatestPipelineTrace(data.trace);
         }
       }
     } catch (err) {
@@ -142,6 +150,19 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [pulseConfig.enabled, pulseConfig.refreshIntervalSec]);
+
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   const handleTriggerPulsePing = useCallback(async (mode?: 'simulate_spike') => {
     try {
@@ -242,6 +263,8 @@ export default function App() {
               onOpenShadowReview={() => setActiveTab('shadow')}
               privacySettings={privacySettings}
               onOpenSettings={() => setIsSettingsOpen(true)}
+              latestTrace={latestPipelineTrace}
+              latestRecord={latestPipelineRecord}
             />
           )}
 
@@ -363,6 +386,11 @@ export default function App() {
           </div>
         </footer>
 
+        <CommandPalette 
+          isOpen={isCommandPaletteOpen}
+          onClose={() => setIsCommandPaletteOpen(false)}
+          onSelect={(text) => handleSendMessageFromDock(text, 'gemini-1.5-pro')}
+        />
       </div>
     </div>
   );
