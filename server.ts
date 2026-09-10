@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { shadowDB, auditDB, sessionDB, apiKeyDB, type ShadowRecord, type UserRole } from "./src/lib/db/database.js";
+import { shadowDB, auditDB, sessionDB, apiKeyDB, telegramKeyboardDB, telegramWebAppDB, type ShadowRecord, type UserRole } from "./src/lib/db/database.js";
 import { getBaleDispatcher } from "./src/lib/outbox/BaleDispatcher.js";
 
 dotenv.config();
@@ -2276,6 +2276,47 @@ app.delete("/api/admin/keys/:id", (req, res) => {
   res.json({ success: deleted });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELEGRAM BOT API - KEYBOARD & WEBAPP CRUD (Admin only)
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/api/admin/telegram/keyboards", (req, res) => {
+  const keyboards = telegramKeyboardDB.list();
+  res.json({ success: true, keyboards });
+});
+
+app.post("/api/admin/telegram/keyboards", (req, res) => {
+  const { id, name, schemaJson } = req.body;
+  if (!name || !schemaJson) {
+    return res.status(400).json({ error: "name and schemaJson are required" });
+  }
+  const kb = telegramKeyboardDB.save({ id, name, schemaJson });
+  res.json({ success: true, keyboard: kb });
+});
+
+app.delete("/api/admin/telegram/keyboards/:id", (req, res) => {
+  const deleted = telegramKeyboardDB.delete(req.params.id);
+  res.json({ success: deleted });
+});
+
+app.get("/api/admin/telegram/webapps", (req, res) => {
+  const webapps = telegramWebAppDB.list();
+  res.json({ success: true, webapps });
+});
+
+app.post("/api/admin/telegram/webapps", (req, res) => {
+  const { id, name, url, configJson } = req.body;
+  if (!name || !url) {
+    return res.status(400).json({ error: "name and url are required" });
+  }
+  const wa = telegramWebAppDB.save({ id, name, url, configJson });
+  res.json({ success: true, webapp: wa });
+});
+
+app.delete("/api/admin/telegram/webapps/:id", (req, res) => {
+  const deleted = telegramWebAppDB.delete(req.params.id);
+  res.json({ success: deleted });
+});
 
 // Setup Vite middleware
 async function startServer() {

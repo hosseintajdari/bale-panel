@@ -81,6 +81,22 @@ db.exec(`
     last_used_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash);
+
+  CREATE TABLE IF NOT EXISTS telegram_keyboards (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    schema_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE IF NOT EXISTS telegram_webapps (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    config_json TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
 `);
 
 export interface ShadowRecord {
@@ -572,6 +588,104 @@ export const apiKeyDB = {
     const res = stmtDeleteApiKey.run(id);
     return res.changes > 0;
   },
+};
+
+export interface TelegramKeyboardRecord {
+  id: string;
+  name: string;
+  schemaJson: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const stmtInsertTgKeyboard = db.prepare(`
+  INSERT INTO telegram_keyboards (id, name, schema_json, created_at, updated_at)
+  VALUES (@id, @name, @schemaJson, @createdAt, @updatedAt)
+`);
+
+const stmtUpdateTgKeyboard = db.prepare(`
+  UPDATE telegram_keyboards SET name = @name, schema_json = @schemaJson, updated_at = @updatedAt WHERE id = @id
+`);
+
+const stmtListTgKeyboards = db.prepare(`SELECT * FROM telegram_keyboards ORDER BY updated_at DESC`);
+const stmtGetTgKeyboard = db.prepare(`SELECT * FROM telegram_keyboards WHERE id = ?`);
+const stmtDeleteTgKeyboard = db.prepare(`DELETE FROM telegram_keyboards WHERE id = ?`);
+
+export const telegramKeyboardDB = {
+  save(record: { id?: string; name: string; schemaJson: string }): TelegramKeyboardRecord {
+    const now = Math.floor(Date.now() / 1000);
+    if (record.id) {
+      const existing = stmtGetTgKeyboard.get(record.id) as any;
+      if (existing) {
+        stmtUpdateTgKeyboard.run({ id: record.id, name: record.name, schemaJson: record.schemaJson, updatedAt: now });
+        return this.get(record.id)!;
+      }
+    }
+    const id = record.id || `tgkb-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    stmtInsertTgKeyboard.run({ id, name: record.name, schemaJson: record.schemaJson, createdAt: now, updatedAt: now });
+    return this.get(id)!;
+  },
+  list(): TelegramKeyboardRecord[] {
+    const rows = stmtListTgKeyboards.all() as any[];
+    return rows.map(r => ({ id: r.id, name: r.name, schemaJson: r.schema_json, createdAt: r.created_at, updatedAt: r.updated_at }));
+  },
+  get(id: string): TelegramKeyboardRecord | null {
+    const row = stmtGetTgKeyboard.get(id) as any;
+    if (!row) return null;
+    return { id: row.id, name: row.name, schemaJson: row.schema_json, createdAt: row.created_at, updatedAt: row.updated_at };
+  },
+  delete(id: string): boolean {
+    return stmtDeleteTgKeyboard.run(id).changes > 0;
+  }
+};
+
+export interface TelegramWebAppRecord {
+  id: string;
+  name: string;
+  url: string;
+  configJson?: string;
+  createdAt: number;
+}
+
+const stmtInsertTgWebApp = db.prepare(`
+  INSERT INTO telegram_webapps (id, name, url, config_json, created_at)
+  VALUES (@id, @name, @url, @configJson, @createdAt)
+`);
+
+const stmtUpdateTgWebApp = db.prepare(`
+  UPDATE telegram_webapps SET name = @name, url = @url, config_json = @configJson WHERE id = @id
+`);
+
+const stmtListTgWebApps = db.prepare(`SELECT * FROM telegram_webapps ORDER BY created_at DESC`);
+const stmtGetTgWebApp = db.prepare(`SELECT * FROM telegram_webapps WHERE id = ?`);
+const stmtDeleteTgWebApp = db.prepare(`DELETE FROM telegram_webapps WHERE id = ?`);
+
+export const telegramWebAppDB = {
+  save(record: { id?: string; name: string; url: string; configJson?: string }): TelegramWebAppRecord {
+    const now = Math.floor(Date.now() / 1000);
+    if (record.id) {
+      const existing = stmtGetTgWebApp.get(record.id) as any;
+      if (existing) {
+        stmtUpdateTgWebApp.run({ id: record.id, name: record.name, url: record.url, configJson: record.configJson || null });
+        return this.get(record.id)!;
+      }
+    }
+    const id = record.id || `tgwa-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    stmtInsertTgWebApp.run({ id, name: record.name, url: record.url, configJson: record.configJson || null, createdAt: now });
+    return this.get(id)!;
+  },
+  list(): TelegramWebAppRecord[] {
+    const rows = stmtListTgWebApps.all() as any[];
+    return rows.map(r => ({ id: r.id, name: r.name, url: r.url, configJson: r.config_json ?? undefined, createdAt: r.created_at }));
+  },
+  get(id: string): TelegramWebAppRecord | null {
+    const row = stmtGetTgWebApp.get(id) as any;
+    if (!row) return null;
+    return { id: row.id, name: row.name, url: row.url, configJson: row.config_json ?? undefined, createdAt: row.created_at };
+  },
+  delete(id: string): boolean {
+    return stmtDeleteTgWebApp.run(id).changes > 0;
+  }
 };
 
 export default db;

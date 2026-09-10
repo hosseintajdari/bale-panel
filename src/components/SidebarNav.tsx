@@ -12,10 +12,11 @@ import {
   ShieldCheck,
   Sliders,
   Cpu,
+  Send,
 } from 'lucide-react';
 import { GlobalPrivacySettings } from '../types';
 
-export type TabType = 'console' | 'whatsapp-hub' | 'shadow' | 'ledger' | 'integrations' | 'code-generator' | 'history';
+export type TabType = 'console' | 'whatsapp-hub' | 'telegram-manager' | 'shadow' | 'ledger' | 'integrations' | 'code-generator' | 'history';
 
 interface SidebarNavProps {
   activeTab: TabType;
@@ -37,6 +38,7 @@ const NAV_ITEMS: {
 }[] = [
   { id: 'console', label: 'Pipeline Console', icon: Terminal },
   { id: 'whatsapp-hub', label: 'WhatsApp Gateway', icon: PhoneCall },
+  { id: 'telegram-manager', label: 'Telegram Bot API', icon: Send },
   { id: 'shadow', label: 'Shadow Queue', badge: 'shadowCount', icon: ShieldAlert },
   { id: 'ledger', label: 'WorkLedger', icon: Layers },
   { id: 'integrations', label: 'Vault & Keys', icon: KeyRound },

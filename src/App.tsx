@@ -10,6 +10,7 @@ import { CodeGeneratorSection } from './components/CodeGeneratorSection';
 import { EvolutionWhatsAppHub } from './components/EvolutionWhatsAppHub';
 import { SettingsMenuModal } from './components/SettingsMenuModal';
 import { GatewayHistoryTab } from './components/GatewayHistoryTab';
+import { TelegramManager } from './components/TelegramManager';
 import { ChannelPlatform, ChannelGatewayStatus, ShadowReviewItem, PipelineTraceStep, GlobalPrivacySettings, GatewayPulseConfig } from './types';
 import { authFetch } from './utils/api';
 
@@ -213,6 +214,10 @@ export default function App() {
                   .then((d) => { if (d.shadowQueue) setShadowQueue(d.shadowQueue); });
               }}
             />
+          )}
+
+          {activeTab === 'telegram-manager' && (
+            <TelegramManager />
           )}
 
           {activeTab === 'shadow' && (
