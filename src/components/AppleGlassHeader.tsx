@@ -76,37 +76,8 @@ export const AppleGlassHeader = memo<AppleGlassHeaderProps>(({
           )}
         </div>
 
-        {/* Center: Integrated Gateway Channel Switcher (Sleek Linear segmented control) */}
-        {channels.length > 0 && setActiveChannel && (
-          <div className="hidden md:flex items-center bg-black/40 p-0.5 rounded-md border border-white/[0.06] text-xs">
-            {channels.map((ch) => {
-              const isSelected = activeChannel === ch.id;
-              const dotColor =
-                ch.latencyMs < 45
-                  ? 'bg-emerald-400'
-                  : ch.latencyMs < 80
-                  ? 'bg-sky-400'
-                  : 'bg-amber-400';
-
-              return (
-                <button
-                  key={ch.id}
-                  onClick={() => setActiveChannel(ch.id)}
-                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'bg-white/[0.12] text-white font-medium shadow-xs'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                  title={`${ch.displayName} (${ch.latencyMs}ms)`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-                  <span className="uppercase">{ch.id}</span>
-                  <span className="text-[10px] text-zinc-500">{ch.latencyMs}ms</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {/* Center: Workspace context or Search could go here in future */}
+        <div className="hidden md:flex flex-1 mx-4"></div>
 
         {/* Right Status Actions */}
         <div className="flex items-center gap-1.5">

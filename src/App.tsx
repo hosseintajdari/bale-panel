@@ -320,10 +320,34 @@ export default function App() {
                 <span className="w-2 h-2 rounded-full bg-zinc-500" />
                 <span>This device</span>
               </div>
-              <span className="text-zinc-600">•</span>
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="font-medium">Gateway ready</span>
+              
+              <span className="text-zinc-600">|</span>
+              
+              {/* Channels Status Inline */}
+              <div className="flex items-center gap-2">
+                {channels.map((ch) => {
+                  const isSelected = activeChannel === ch.id;
+                  const dotColor =
+                    ch.latencyMs < 45
+                      ? 'bg-emerald-400'
+                      : ch.latencyMs < 80
+                      ? 'bg-sky-400'
+                      : 'bg-amber-400';
+                  
+                  return (
+                    <button
+                      key={ch.id}
+                      onClick={() => setActiveChannel(ch.id)}
+                      className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded transition-colors cursor-pointer ${
+                        isSelected ? 'bg-white/[0.08] text-white font-medium' : 'hover:bg-white/[0.04] text-zinc-500 hover:text-zinc-300'
+                      }`}
+                      title={`${ch.displayName} (${ch.latencyMs}ms)`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                      <span className="uppercase text-[10px]">{ch.id} {ch.latencyMs}ms</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
