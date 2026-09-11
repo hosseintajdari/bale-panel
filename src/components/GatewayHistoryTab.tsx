@@ -409,7 +409,7 @@ export const GatewayHistoryTab = memo<GatewayHistoryTabProps>(({ onRefreshChanne
 
       {/* Channel Status Transition Modal */}
       {showStatusModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowStatusModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90" onClick={() => setShowStatusModal(false)}>
           <div
             className="w-full max-w-sm rounded-xl bg-[#0A0C10] border border-[#1C202B] p-4 shadow-2xl space-y-3"
             onClick={(e) => e.stopPropagation()}

@@ -37,6 +37,7 @@ Thumbs.db
 # Evidence and temporary artifacts
 work/
 scratch/
+.agents/
 
 # SQLite runtime data — DO NOT commit
 data/*.db

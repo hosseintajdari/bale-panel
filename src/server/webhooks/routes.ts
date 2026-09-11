@@ -1,0 +1,91 @@
+import { Router } from "express";
+import { auditDB } from "../../lib/db/database.js";
+import { secureEquals } from "../auth/index.js";
+import { BALE_BOT_TOKEN, BALE_WEBHOOK_SECRET } from "../config.js";
+import { processPipelineMessage } from "../pipeline/index.js";
+
+export const webhookRouter = Router();
+
+// Evolution API v2 Real Webhook Endpoint (For WhatsApp)
+webhookRouter.post("/webhook/evolution", async (req, res) => {
+  // Acknowledge webhook quickly to avoid timeout
+  res.status(200).json({ status: "received" });
+
+  try {
+    // 1. Universal Ingest Adapter
+    const payload = req.body;
+
+    // Check if it's a message event
+    if (payload?.event !== "messages.upsert") return;
+
+    const message = payload?.data?.messages?.[0];
+    if (!message || message.key.fromMe) return;
+
+    const senderId = message.key.remoteJid;
+    const senderDisplay = message.pushName || senderId;
+    const text = message.message?.conversation || message.message?.extendedTextMessage?.text || "";
+
+    if (!text) return;
+
+    // Dispatch internally to pipeline process
+    await processPipelineMessage("whatsapp", senderId, senderDisplay, text, "WhatsApp User", "live");
+  } catch (error) {
+    console.error("Evolution API Webhook Error:", error);
+  }
+});
+
+// BALE WEBHOOK ENDPOINT — Receives real messages from Bale Bot API
+webhookRouter.post("/webhook/bale", async (req, res) => {
+  // Verify Bale webhook secret token if configured
+  if (BALE_WEBHOOK_SECRET) {
+    const incomingSecret = typeof req.headers["x-telegram-bot-api-secret-token"] === "string"
+      ? req.headers["x-telegram-bot-api-secret-token"]
+      : "";
+    if (!secureEquals(incomingSecret, BALE_WEBHOOK_SECRET)) {
+      console.warn("[BALE WEBHOOK] Secret token mismatch — request rejected.");
+      return res.status(403).json({ error: "Forbidden" });
+    }
+  }
+
+  // Acknowledge immediately
+  res.status(200).json({ ok: true });
+
+  try {
+    const update = req.body;
+    const message = update?.message;
+    if (!message) return;
+
+    const chatId = String(message.chat?.id || message.from?.id || "");
+    const senderName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || "کاربر بله";
+    const text: string = message.text || message.caption || "";
+
+    if (!text.trim() || !chatId) return;
+
+    console.log(`[BALE WEBHOOK] From: ${chatId} (${senderName}) | Text: ${text.slice(0, 60)}`);
+
+    // Record inbound event to audit log
+    const now = new Date();
+    try {
+      auditDB.insert({
+        id: `bale-in-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: now.toISOString(),
+        timeFormatted: now.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dateFormatted: now.toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" }),
+        channelId: "bale",
+        channelName: "پیام‌رسان بله (Bale Hook)",
+        eventType: "inbound_message",
+        severity: "info",
+        summary: `پیام ورودی از بله: ${senderName} (${chatId})`,
+        details: text.slice(0, 200),
+        triggeredBy: "inbound_webhook",
+      });
+    } catch (auditErr) {
+      console.warn("[BALE WEBHOOK] Failed to record audit entry:", auditErr);
+    }
+
+    // Run through pipeline
+    await processPipelineMessage("bale", chatId, senderName, text, "Personal", "shadow");
+  } catch (err) {
+    console.error("[BALE WEBHOOK ERROR]:", err);
+  }
+});

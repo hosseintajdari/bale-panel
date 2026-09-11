@@ -304,7 +304,7 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3" dir="ltr">
       {/* Dim Matte Backdrop */}
       <div
-        className="fixed inset-0 bg-black/80 backdrop-blur-xs transition-opacity"
+        className="fixed inset-0 bg-black/80 transition-opacity"
         onClick={onClose}
       />
 

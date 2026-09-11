@@ -14,127 +14,71 @@ import { TelegramManager } from './components/TelegramManager';
 import { AgentCommandDock } from './components/AgentCommandDock';
 import { Zap } from 'lucide-react';
 import { CommandPalette } from './components/CommandPalette';
-import { ChannelPlatform, ChannelGatewayStatus, ShadowReviewItem, PipelineTraceStep, GlobalPrivacySettings, GatewayPulseConfig } from './types';
+import { usePipelineStore } from './store/usePipelineStore';
+import { useAppStore } from './store/useAppStore';
 import { authFetch } from './utils/api';
 
-const INITIAL_CHANNELS: ChannelGatewayStatus[] = [
-  {
-    id: 'whatsapp',
-    displayName: 'WhatsApp Multi-Device Gateway',
-    status: 'active',
-    method: 'Evolution API v2 / Direct Webhook',
-    latencyMs: 24,
-    unprocessedQueue: 1,
-    lastHeartbeat: 'اکنون',
-  },
-  {
-    id: 'bale',
-    displayName: 'Bale Messenger Bot Hook',
-    status: 'active',
-    method: 'Bale Webhook Pipeline (bale-med)',
-    latencyMs: 38,
-    unprocessedQueue: 1,
-    lastHeartbeat: 'اکنون',
-  },
-  {
-    id: 'telegram',
-    displayName: 'Telegram Bot API',
-    status: 'standby',
-    method: 'Direct HTTPS Webhook',
-    latencyMs: 52,
-    unprocessedQueue: 0,
-    lastHeartbeat: '۱ دقیقه پیش',
-  },
-  {
-    id: 'sms',
-    displayName: 'Iran SMS Fast-Alert Gateway',
-    status: 'active',
-    method: 'REST Provider Gate (Kavenegar/Faraz)',
-    latencyMs: 110,
-    unprocessedQueue: 0,
-    lastHeartbeat: 'اکنون',
-  },
-];
-
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [operatorSecret, setOperatorSecret] = useState('');
+  const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('console');
-  const [activeChannel, setActiveChannel] = useState<ChannelPlatform>('whatsapp');
-  const [channels, setChannels] = useState<ChannelGatewayStatus[]>(INITIAL_CHANNELS);
-  const [shadowQueue, setShadowQueue] = useState<ShadowReviewItem[]>([]);
-  const [environmentMode, setEnvironmentMode] = useState<'shadow' | 'live'>('shadow');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState('tg-gateway-migration');
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
-  const [latestPipelineTrace, setLatestPipelineTrace] = useState<PipelineTraceStep[] | null>(null);
-  const [latestPipelineRecord, setLatestPipelineRecord] = useState<ShadowReviewItem | null>(null);
+  const {
+    environmentMode,
+    activeSessionId,
+    shadowQueue,
+    latestPipelineTrace,
+    latestPipelineRecord,
+    setEnvironmentMode,
+    setActiveSessionId,
+    setShadowQueue,
+    processMessage,
+    handleShadowAction,
+    fetchInitialState: fetchPipelineInitialState,
+  } = usePipelineStore();
 
-  const handleSendMessageFromDock = useCallback(async (message: string, model: string) => {
-    try {
-      const res = await authFetch('/api/pipeline/process', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          channel: activeChannel,
-          senderId: activeSessionId,
-          senderDisplay: `Operator (${model})`,
-          text: message,
-          environmentMode,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.shadowRecord) {
-          setShadowQueue((prev) => [data.shadowRecord, ...prev]);
-          setLatestPipelineRecord(data.shadowRecord);
-        }
-        if (data.trace) {
-          setLatestPipelineTrace(data.trace);
-        }
-      }
-    } catch (err) {
-      console.error('Dock dispatch error:', err);
-    }
-  }, [activeChannel, activeSessionId, environmentMode]);
+  const {
+    activeChannel,
+    channels,
+    privacySettings,
+    pulseConfig,
+    setActiveChannel,
+    setChannels,
+    setPrivacySettings,
+    setPulseConfig,
+    fetchInitialState: fetchAppInitialState,
+    triggerPulsePing,
+  } = useAppStore();
 
-  const [privacySettings, setPrivacySettings] = useState<GlobalPrivacySettings>({
-    retentionPolicy: 'audited',
-    highPrivacyBotTypes: ['medical', 'clinical', 'professional', 'triage'],
-    scrubSensitiveMedicalNotes: true,
-    ephemeralSessionsCount: 52,
-    loggedSessionsCount: 198,
-    lastToggledAt: 'هم‌اکنون',
-  });
-
-  const [pulseConfig, setPulseConfig] = useState<GatewayPulseConfig>({
-    enabled: true,
-    gateways: {
-      whatsapp: true,
-      bale: true,
-      telegram: true,
-      sms: true,
-    },
-    refreshIntervalSec: 4,
-    alertOnJitterThresholdMs: 40,
-    lastCheckedAt: 'هم‌اکنون',
-  });
-
-  // Fetch initial state from server
   useEffect(() => {
-    authFetch('/api/pipeline/state')
+    authFetch('/api/auth/session')
       .then((res) => res.json())
-      .then((data) => {
-        if (data.channels) setChannels(data.channels);
-        if (data.shadowQueue) setShadowQueue(data.shadowQueue);
-        if (data.privacySettings) setPrivacySettings(data.privacySettings);
-        if (data.pulseConfig) setPulseConfig(data.pulseConfig);
-      })
-      .catch((err) => console.debug('State fetch error:', err));
+      .then((data) => setIsAuthenticated(Boolean(data.authenticated)))
+      .catch(() => setIsAuthenticated(false));
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetchPipelineInitialState();
+    fetchAppInitialState();
+
+    // Poll for new shadow items from backend engines
+    const pollInterval = setInterval(() => {
+      if (!document.hidden) {
+        fetchPipelineInitialState();
+      }
+    }, 5000);
+
+    return () => clearInterval(pollInterval);
+  }, [isAuthenticated, fetchPipelineInitialState, fetchAppInitialState]);
 
   // Periodic Telemetry Pulse Check
   useEffect(() => {
-    if (!pulseConfig.enabled) return;
+    if (!isAuthenticated || !pulseConfig.enabled) return;
 
     const intervalMs = Math.max(2, pulseConfig.refreshIntervalSec || 3) * 1000;
     const interval = setInterval(() => {
@@ -149,9 +93,7 @@ export default function App() {
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [pulseConfig.enabled, pulseConfig.refreshIntervalSec]);
-
-  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  }, [isAuthenticated, pulseConfig.enabled, pulseConfig.refreshIntervalSec, setChannels, setPulseConfig]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -164,46 +106,37 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
-  const handleTriggerPulsePing = useCallback(async (mode?: 'simulate_spike') => {
-    try {
-      const res = await authFetch('/api/gateways/pulse-ping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        if (data.channels) setChannels(data.channels);
-        if (data.config) setPulseConfig(data.config);
-      }
-    } catch (err) {
-      console.error('Pulse ping failed:', err);
-    }
-  }, []);
-
-  const handlePipelineProcessed = useCallback((record: ShadowReviewItem, trace: PipelineTraceStep[]) => {
-    setShadowQueue((prev) => [record, ...prev]);
-  }, []);
-
-  const handleShadowAction = useCallback(async (id: string, action: 'approve' | 'reject' | 'modify', editedReply?: string) => {
-    try {
-      const res = await authFetch('/api/pipeline/shadow/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, action, editedReply }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setShadowQueue((prev) =>
-          prev.map((item) => (item.id === id ? { ...item, ...data.item } : item))
-        );
-      }
-    } catch (err) {
-      console.error('Shadow action failed:', err);
-    }
-  }, []);
-
   const pendingShadowCount = shadowQueue.filter((s) => s.status === 'pending').length;
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginError('');
+    const response = await authFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: operatorSecret }),
+    });
+    setOperatorSecret('');
+    if (!response.ok) {
+      setLoginError('Operator secret was not accepted.');
+      return;
+    }
+    setIsAuthenticated(true);
+  };
+
+  if (isAuthenticated !== true) {
+    return (
+      <main className="min-h-screen bg-[#080A0F] text-zinc-100 flex items-center justify-center p-6">
+        <form onSubmit={handleLogin} className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
+          <h1 className="text-lg font-semibold">Bale Panel operator sign-in</h1>
+          <p className="text-sm text-zinc-400">Enter the local operator secret. It is used only to create an HttpOnly session.</p>
+          <input type="password" value={operatorSecret} onChange={(event) => setOperatorSecret(event.target.value)} autoComplete="current-password" required className="w-full rounded bg-zinc-800 px-3 py-2" />
+          {loginError && <p className="text-sm text-red-400">{loginError}</p>}
+          <button type="submit" className="w-full rounded bg-sky-600 px-3 py-2 font-medium">Sign in</button>
+        </form>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#080A0F] text-zinc-100 flex font-sans selection:bg-sky-500/20 selection:text-sky-200" dir="ltr">
@@ -248,7 +181,7 @@ export default function App() {
           channels={channels}
           activeChannel={activeChannel}
           setActiveChannel={setActiveChannel}
-          onTriggerPulsePing={handleTriggerPulsePing}
+          onTriggerPulsePing={triggerPulsePing}
         />
 
         {/* Content Body */}
@@ -257,24 +190,13 @@ export default function App() {
           {/* Active Viewport */}
           {activeTab === 'console' && (
             <PipelineConsole
-              activeChannel={activeChannel}
-              environmentMode={environmentMode}
-              onProcessed={handlePipelineProcessed}
               onOpenShadowReview={() => setActiveTab('shadow')}
-              privacySettings={privacySettings}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-              latestTrace={latestPipelineTrace}
-              latestRecord={latestPipelineRecord}
             />
           )}
 
           {activeTab === 'whatsapp-hub' && (
             <EvolutionWhatsAppHub
-              onShadowUpdated={() => {
-                authFetch('/api/pipeline/state')
-                  .then((r) => r.json())
-                  .then((d) => { if (d.shadowQueue) setShadowQueue(d.shadowQueue); });
-              }}
+              onShadowUpdated={() => fetchPipelineInitialState()}
             />
           )}
 
@@ -307,32 +229,28 @@ export default function App() {
           {activeTab === 'history' && (
             <GatewayHistoryTab
               onRefreshChannels={() => {
-                authFetch('/api/pipeline/state')
-                  .then((r) => r.json())
-                  .then((d) => {
-                    if (d.channels) setChannels(d.channels);
-                    if (d.shadowQueue) setShadowQueue(d.shadowQueue);
-                  });
+                fetchPipelineInitialState();
+                fetchAppInitialState();
               }}
             />
           )}
         </main>
 
         {/* Agent Command Input Dock */}
-        <AgentCommandDock onSendMessage={handleSendMessageFromDock} />
+        <AgentCommandDock onSendMessage={(text, model) => processMessage(activeChannel, `Operator (${model})`, text)} />
 
         {/* Global Settings & Privacy Modal */}
         <SettingsMenuModal
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
           privacySettings={privacySettings}
-          onUpdatePrivacySettings={(newSettings) => setPrivacySettings(newSettings)}
-          onNavigateToTab={(tab) => setActiveTab(tab)}
+          onUpdatePrivacySettings={setPrivacySettings}
+          onNavigateToTab={setActiveTab}
           pulseConfig={pulseConfig}
-          onUpdatePulseConfig={(newConfig) => setPulseConfig(newConfig)}
+          onUpdatePulseConfig={setPulseConfig}
           channels={channels}
-          onTriggerPulsePing={handleTriggerPulsePing}
-          onUpdateChannels={(updated) => setChannels(updated)}
+          onTriggerPulsePing={triggerPulsePing}
+          onUpdateChannels={setChannels}
         />
 
         {/* Minimalist Telemetry & Status Bar (Hermes / Antigravity Cockpit Style) */}
@@ -389,10 +307,9 @@ export default function App() {
         <CommandPalette 
           isOpen={isCommandPaletteOpen}
           onClose={() => setIsCommandPaletteOpen(false)}
-          onSelect={(text) => handleSendMessageFromDock(text, 'gemini-1.5-pro')}
+          onSelect={(text) => processMessage(activeChannel, 'gemini-1.5-pro', text)}
         />
       </div>
     </div>
   );
 }
-

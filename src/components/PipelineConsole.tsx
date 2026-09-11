@@ -1,5 +1,4 @@
 import React, { useState, memo } from 'react';
-import { ChannelPlatform, PipelineTraceStep, ShadowReviewItem, GlobalPrivacySettings } from '../types';
 import {
   ArrowRight,
   ShieldAlert,
@@ -7,30 +6,23 @@ import {
   AlertTriangle,
   Layers,
   Terminal,
-  ChevronDown,
-  ChevronRight,
 } from 'lucide-react';
+import { usePipelineStore } from '../store/usePipelineStore';
+import { useAppStore } from '../store/useAppStore';
+import { PersianPayloadCard } from './PersianPayloadCard';
 
 interface PipelineConsoleProps {
-  activeChannel: ChannelPlatform;
-  environmentMode: 'shadow' | 'live';
-  onProcessed: (record: ShadowReviewItem, trace: PipelineTraceStep[]) => void;
   onOpenShadowReview: () => void;
-  privacySettings?: GlobalPrivacySettings;
-  onOpenSettings?: () => void;
-  latestTrace: PipelineTraceStep[] | null;
-  latestRecord: ShadowReviewItem | null;
 }
 
 export const PipelineConsole = memo<PipelineConsoleProps>(({
-  activeChannel,
-  environmentMode,
-  onProcessed,
   onOpenShadowReview,
-  latestTrace,
-  latestRecord,
 }) => {
   const [isTraceOpen, setIsTraceOpen] = useState(false);
+  const { latestTrace, latestRecord } = usePipelineStore(state => ({
+    latestTrace: state.latestPipelineTrace,
+    latestRecord: state.latestPipelineRecord
+  }));
 
   return (
     <div className="space-y-3 h-full flex flex-col justify-end">
@@ -111,9 +103,7 @@ export const PipelineConsole = memo<PipelineConsoleProps>(({
               </div>
             </div>
 
-            <div dir="rtl" className="p-3 rounded-lg bg-black/40 border border-[#1C202B] text-xs text-zinc-200 leading-relaxed font-sans min-h-[90px]">
-              {latestRecord?.proposedReply || 'پاسخ مدل یا قوانین قطعی پس از اجرای خط لوله در این بخش نمایش داده می‌شود.'}
-            </div>
+            <PersianPayloadCard content={latestRecord?.proposedReply || ''} />
 
             {latestRecord?.deterministicRuleApplied && (
               <div className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-center gap-1.5 font-mono">
@@ -144,4 +134,3 @@ export const PipelineConsole = memo<PipelineConsoleProps>(({
 });
 
 PipelineConsole.displayName = 'PipelineConsole';
-

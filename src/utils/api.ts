@@ -1,5 +1,3 @@
-// Authenticated API utility to prevent 401 Unauthorized across all secured routes
-
 let cachedToken: string | null = null;
 
 export async function getOperatorToken(): Promise<string> {
@@ -22,7 +20,7 @@ export async function getOperatorToken(): Promise<string> {
 export async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const token = await getOperatorToken();
   const headers = new Headers(init?.headers || {});
-  
+
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
@@ -30,6 +28,7 @@ export async function authFetch(input: RequestInfo | URL, init?: RequestInit): P
   return fetch(input, {
     ...init,
     headers,
+    credentials: 'same-origin',
   });
 }
 

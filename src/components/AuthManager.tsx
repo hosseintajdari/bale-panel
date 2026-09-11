@@ -210,7 +210,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
   };
 
   return (
-    <div className="p-5 rounded-3xl backdrop-blur-2xl bg-white/[0.03] border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.3)] space-y-5" dir="rtl">
+    <div className="p-5 rounded-3xl bg-[#0A0C10] border border-[#1C202B] shadow-2xl space-y-5" dir="rtl">
       
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/[0.06] pb-4">
@@ -581,7 +581,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
 
       {/* Export .env Encrypted Modal / Drawer */}
       {isExportOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="max-w-2xl w-full bg-[#0D1117] border border-white/[0.12] rounded-3xl p-5 space-y-4 shadow-2xl animate-fade-in text-right">
             <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
               <div className="flex items-center gap-2">
