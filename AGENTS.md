@@ -25,3 +25,11 @@
   - **Conversational Work Ledger** (from P0 Sistan project): Context-aware session ledger, synthetic flows, evidence-backed contracts, local persona nuances.
   - **Channel-Neutral Normalized Envelope**: Incoming messages from WhatsApp, Bale, or Telegram are parsed into a unified envelope, run through governance pipelines, and delivered via the appropriate channel outbox without business logic entanglement.
 
+## 4. Work Tracking and GitHub Evidence
+- Before non-trivial code, configuration, deployment, or documentation work, locate an existing GitHub Issue or create one. State the scope, acceptance evidence, deployment target (local, `ct`, `balemed`, mobile, or ChatGPT workspace), and any human-approval or safety boundary.
+- Use a focused branch and pull request for changes intended for the shared remote. Commit messages must describe the actual change and reference the Issue when one exists (for example, `Refs #123`). A pushed commit is not a substitute for an Issue or PR.
+- Do not silently commit directly to `main`. An exception is permitted only for a tiny, reversible emergency fix when the user explicitly directs it; record the reason, validation, and a follow-up Issue in the commit or immediately afterward.
+- For server work, do not put secrets, raw user messages, patient data, tokens, or private network details in commits, PRs, Issues, logs, or screenshots. Record only the target host, non-sensitive release identifier, commands/tests at a high level, observed result, rollback point, and what remains unverified.
+- For mobile, ChatGPT-workspace, Cursor, Codex, or other-agent work, create or update the same Issue with the repository/branch (if any), artifact or commit link, validation result, and ownership. Never claim that another agent's change is verified merely because it is mentioned in chat.
+- Before declaring work complete, update the Issue/PR with the final commit(s), tests/checks actually run, deployment status, uncertainties, and one safe next action. Close the Issue only when its acceptance criteria are met.
+
