@@ -27,7 +27,7 @@ The SQLite schema in `src/lib/db/database.ts` was preserved.
 
 ## Operational requirements
 
-Production requires both `VAULT_MASTER_KEY` and `PANEL_API_SECRET`; startup validation rejects an incomplete configuration. The server continues to bind to `0.0.0.0` on `PORT` (default `3001`), matching the prior behavior.
+Production requires both `VAULT_MASTER_KEY` and `PANEL_API_SECRET`; startup validation rejects an incomplete configuration. The application binds only to `127.0.0.1` on `PORT` (default `3001`); expose it through an HTTPS reverse proxy rather than directly.
 
 ## Follow-up
 

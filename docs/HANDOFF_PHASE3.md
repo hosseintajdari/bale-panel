@@ -8,11 +8,11 @@
 
 ### ۱.۱. حل مشکل Authentication در فرانت‌اند (ShadowQueue UI & Pipeline State)
 - **ماژول کمکی `src/utils/api.ts` (`authFetch`)**:
-  - مدیریت خودکار توکن امنیتی اپراتور با تابع `getOperatorToken()`.
-  - تزریق خودکار هدر `Authorization: Bearer <PANEL_API_SECRET>` به تمام درخواست‌ها.
+  - ارسال درخواست‌های same-origin با cookie نشست HttpOnly.
+  - هیچ credential اپراتور یا کلید اصلی به JavaScript فرانت‌اند منتقل نمی‌شود.
 - **ایمن‌سازی ارتباطات فرانت‌اند در `src/App.tsx` و `src/components/GatewayHistoryTab.tsx`**:
   - روت‌های `/api/pipeline/state`، `/api/system/pulse-settings`، `/api/pipeline/shadow/action` و `/api/gateways/history` همگی با `authFetch` فراخوانی می‌شوند تا از خطای `401 Unauthorized` جلوگیری شود.
-- **اندپوینت امن کلاینت داخلی**: اضافه شدن `GET /api/auth/token` در `server.ts` جهت ارائه امن توکن برای فرانت‌اند محلی.
+- احراز هویت UI از مسیر login و session-cookie انجام می‌شود؛ endpoint بازگردانندهٔ credential وجود ندارد.
 
 ### ۱.۲. مهاجرت کامل لاگ‌های گیت‌وی به پایگاه‌داده پایدار (`gatewayAuditLogs` به SQLite)
 - آرایه موقت درون‌حافظه‌ای (`in-memory`) کاملاً حذف شد.
@@ -38,7 +38,7 @@
 |---|---|---|
 | دیتابیس پایدار | `src/lib/db/database.ts` | شامل `shadow_queue`, `audit_logs`, `bot_sessions` |
 | کلاینت Auth | `src/utils/api.ts` | آماده و فعال |
-| بک‌اند سرور | `server.ts` | متصل به SQLite، توکن اپراتور، پورت 3001 |
+| بک‌اند سرور | `server.ts` | متصل به SQLite، login/session، پورت 3001 |
 | فرانت‌اند و تب‌ها | `src/App.tsx`, `src/components/GatewayHistoryTab.tsx` | یکپارچه با `authFetch` |
 | بیلد پروداکشن | `dist/` | بیلد موفق بدون هیچ خطای TypeScript یا Bundling |
 

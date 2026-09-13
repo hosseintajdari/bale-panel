@@ -176,6 +176,9 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(successLogin.body.authenticated, true);
     const cookie = successLogin.headers["set-cookie"]?.[0] || "";
     assert.ok(cookie.includes("bale_panel_session="));
+    assert.ok(cookie.includes("HttpOnly"));
+    assert.ok(cookie.includes("SameSite=Strict"));
+    if (process.env.NODE_ENV === "production") assert.ok(cookie.includes("Secure"));
 
     // 5.3 Session check with cookie
     const checkSession = await request(testServer, {
@@ -186,13 +189,26 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(checkSession.status, 200);
     assert.equal(checkSession.body.authenticated, true);
 
-    // 5.4 Logout
+    // 5.4 The HttpOnly session authorizes protected routes without exposing a bearer token.
+    const sessionAdmin = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/keys",
+      headers: { Cookie: cookie },
+    });
+    assert.equal(sessionAdmin.status, 200);
+    assert.equal(sessionAdmin.body.success, true);
+
+    // 5.5 Logout
     const logout = await request(testServer, {
       method: "POST",
       path: "/api/auth/logout",
       headers: { Cookie: cookie },
     });
     assert.equal(logout.status, 204);
+    const clearedCookie = logout.headers["set-cookie"]?.[0] || "";
+    assert.ok(clearedCookie.includes("HttpOnly"));
+    assert.ok(clearedCookie.includes("SameSite=Strict"));
+    if (process.env.NODE_ENV === "production") assert.ok(clearedCookie.includes("Secure"));
   });
 
   await t.test("6. HTTP Endpoints: Guarded Routes & RBAC Enforcement", async () => {
@@ -597,14 +613,14 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(delNotFound.status, 404);
   });
 
-  await t.test("15. Unauthenticated Bot & Operator Bootstrap Contract Parity", async () => {
-    // 15.1 GET /api/auth/token returns PANEL_API_SECRET
+  await t.test("15. Unauthenticated routes do not disclose operator credentials", async () => {
+    // 15.1 The removed bootstrap route must not disclose a credential.
     const tokenRes = await request(testServer, {
       method: "GET",
       path: "/api/auth/token",
     });
-    assert.equal(tokenRes.status, 200);
-    assert.equal(tokenRes.body.token, PANEL_API_SECRET);
+    assert.equal(tokenRes.status, 404);
+    assert.notEqual(tokenRes.body?.token, PANEL_API_SECRET);
 
     // 15.2 GET /api/health without auth -> 200
     const healthRes = await request(testServer, {

@@ -10,7 +10,7 @@ This repository strictly enforces zero credentials in version control.
 1. **Never Commit Secrets**: Never commit `.env`, private keys, API keys (`GEMINI_API_KEY`, `PANEL_API_SECRET`, `VAULT_MASTER_KEY`), or messenger bot tokens.
 2. **Encrypted Vault Storage**: All external credentials are encrypted at rest using AES-256-GCM via the master vault key.
 3. **Environment Separation**: Always use `.env.example` as a template. Local values belong strictly in unversioned `.env`.
-4. **Access Control**: Administrative routes (`/api/admin/*`) require a valid `Bearer <PANEL_API_SECRET>` token.
+4. **Access Control**: Administrative routes (`/api/admin/*`) require a valid authenticated session or a server-to-server Bearer credential. Browser clients must use the HttpOnly session-cookie flow; the master credential must never be returned by an API response or included in frontend code.
 
 ## Reporting a Vulnerability
 

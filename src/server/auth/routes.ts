@@ -22,11 +22,6 @@ authRouter.get("/api/auth/session", (req, res) => {
   res.json({ authenticated: Boolean(user) });
 });
 
-// UI operator session bootstrap endpoint (serves operator token for internal UI frontend)
-authRouter.get("/api/auth/token", (req, res) => {
-  res.json({ token: PANEL_API_SECRET });
-});
-
 authRouter.post("/api/auth/login", (req, res) => {
   const secret = typeof req.body?.secret === "string" ? req.body.secret : "";
   if (!secureEquals(secret, PANEL_API_SECRET)) {

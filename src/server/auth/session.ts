@@ -49,7 +49,8 @@ export function setSessionCookie(res: express.Response, sessionId: string): void
 }
 
 export function clearSessionCookie(res: express.Response): void {
-  res.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
 }
 
 export function hashToken(token: string): string {
