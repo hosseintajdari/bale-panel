@@ -8,7 +8,6 @@ import {
   Terminal,
 } from 'lucide-react';
 import { usePipelineStore } from '../store/usePipelineStore';
-import { useAppStore } from '../store/useAppStore';
 import { PersianPayloadCard } from './PersianPayloadCard';
 
 interface PipelineConsoleProps {
@@ -19,10 +18,10 @@ export const PipelineConsole = memo<PipelineConsoleProps>(({
   onOpenShadowReview,
 }) => {
   const [isTraceOpen, setIsTraceOpen] = useState(false);
-  const { latestTrace, latestRecord } = usePipelineStore(state => ({
-    latestTrace: state.latestPipelineTrace,
-    latestRecord: state.latestPipelineRecord
-  }));
+  // Select stable store values independently. Returning a new object here makes
+  // Zustand's React subscription see every render as a changed snapshot.
+  const latestTrace = usePipelineStore((state) => state.latestPipelineTrace);
+  const latestRecord = usePipelineStore((state) => state.latestPipelineRecord);
 
   return (
     <div className="space-y-3 h-full flex flex-col justify-end">
