@@ -191,7 +191,7 @@ export const shadowDB = {
         senderDisplay: "+98 912 345 6789 (سهامدار/همکار)",
         userMessage: "وضعیت گزارش تجمیعی شاخص‌های Embednet OS و خروجی لاگ چت‌ها آماده شد؟",
         proposedReply: "سلام و احترام. بله، شاخص‌های آپ‌تایم و صف اعتبارسنجی سایه (Shadow Queue) در پنل استخراج شده و گزارش برای شما ارسال شد.",
-        timestamp: "چند دقیقه پیش",
+        timestamp: new Date().toISOString(),
         confidenceScore: 0.94,
         riskLevel: "safe",
         status: "pending",

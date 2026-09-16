@@ -3,12 +3,18 @@ import { shadowDB, type ShadowRecord } from "../../lib/db/database.js";
 import { gatewayPulseConfig, getChannelsWithTelemetry } from "../gateways/index.js";
 import { globalPrivacySettings } from "../ledger/index.js";
 import { dispatchToOutbox } from "../outbox/index.js";
+import { requireOperatorAuth } from "../auth/index.js";
 import { processPipelineMessage } from "./engine.js";
 
 export const pipelineRouter = Router();
 
 pipelineRouter.get("/api/pipeline/state", (req, res) => {
   const queue = shadowDB.getAll();
+  const allRecords = shadowDB.getAll();
+  const totalProcessed = allRecords.filter((r) => r.status !== "pending").length;
+  const autoApprovedSafe = allRecords.filter((r) => r.status === "approved").length;
+  const rejectedOrRedline = allRecords.filter((r) => r.status === "rejected").length;
+
   res.json({
     status: "operational",
     environment: "Embednet OS Core v4.2 (LangBot Modular Pattern + SQLite Persistence)",
@@ -17,10 +23,10 @@ pipelineRouter.get("/api/pipeline/state", (req, res) => {
     channels: getChannelsWithTelemetry(),
     shadowQueue: queue,
     stats: {
-      totalProcessed: 1428,
+      totalProcessed,
       shadowIntercepted: queue.length,
-      autoApprovedSafe: 1290,
-      rejectedOrRedline: 27,
+      autoApprovedSafe,
+      rejectedOrRedline,
       ephemeralSessions: globalPrivacySettings.ephemeralSessionsCount,
       auditedSessions: globalPrivacySettings.loggedSessionsCount,
     },
@@ -28,7 +34,7 @@ pipelineRouter.get("/api/pipeline/state", (req, res) => {
 });
 
 // Ingest Shadow Trace from Backend Engines
-pipelineRouter.post("/api/pipeline/ingest/shadow-trace", (req, res) => {
+pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (req, res) => {
   try {
     const { engine_id, shadow_item } = req.body;
     if (!engine_id || !shadow_item) {

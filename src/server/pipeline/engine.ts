@@ -94,7 +94,7 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
           ? "[سشن محرمانه پزشکی - پالایش‌شده بر اساس پروتکل Zero-Retention]"
           : trimmed),
     proposedReply,
-    timestamp: "اکنون",
+    timestamp: new Date().toISOString(),
     confidenceScore: isRedlineMedical ? 0.99 : 0.92,
     riskLevel: isBaleAutoPersonal ? "safe" : riskLevel,
     status: isBaleAutoPersonal
