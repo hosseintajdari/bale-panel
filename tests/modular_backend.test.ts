@@ -1110,4 +1110,64 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(sbxEmptyRes.status, 400);
     assert.equal(sbxEmptyRes.body.error, "guestName is required");
   });
+
+  await t.test("20. Phase 6a: Health Liveness Probe & Shadow Trace Streaming Contract", async () => {
+    // 20.1 GET /api/health probe is public and returns 200 with database status
+    const healthRes = await request(testServer, {
+      method: "GET",
+      path: "/api/health",
+    });
+    assert.equal(healthRes.status, 200);
+    assert.equal(healthRes.body.status, "ok");
+    assert.equal(healthRes.body.db, "connected");
+    assert.ok(typeof healthRes.body.queueSize === "number");
+
+    // 20.2 POST /api/pipeline/ingest/shadow-trace requires operator auth
+    const unauthIngest = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/ingest/shadow-trace",
+      body: { engine_id: "bale-med", shadow_item: {} },
+    });
+    assert.equal(unauthIngest.status, 401);
+
+    // 20.3 Ingest validates required shadow_item fields
+    const invalidIngest = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/ingest/shadow-trace",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {
+        engine_id: "bale-med",
+        shadow_item: { userMessage: "test message without reply" },
+      },
+    });
+    assert.equal(invalidIngest.status, 400);
+    assert.match(invalidIngest.body.error, /userMessage and proposedReply/);
+
+    // 20.4 Ingest valid shadow trace returns 200 and record id
+    const validIngest = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/ingest/shadow-trace",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {
+        engine_id: "bale-med",
+        shadow_item: {
+          sessionId: "bale-session-phase6a",
+          channel: "bale",
+          userMessage: "سلام، قیمت آزیترومایسین چنده؟",
+          proposedReply: "پیام شما دریافت شد و به داروساز ارجاع گردید.",
+          riskLevel: "safe",
+        },
+      },
+    });
+    assert.equal(validIngest.status, 200);
+    assert.equal(validIngest.body.success, true);
+    assert.ok(validIngest.body.id);
+
+    // 20.5 GET /api/pipeline/stream requires operator auth
+    const unauthStream = await request(testServer, {
+      method: "GET",
+      path: "/api/pipeline/stream",
+    });
+    assert.equal(unauthStream.status, 401);
+  });
 });
