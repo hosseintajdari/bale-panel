@@ -119,7 +119,7 @@ IMPORTANT: Do not output markdown codeblock wrapper tags like \`\`\`json or \`\`
 // Endpoint: High-Performance Semantic Memory Query Simulation
 botRouter.post("/api/memory/query", async (req, res) => {
   try {
-    const { query, activeStage = "STAGE_CAPTURE" } = req.body;
+    const { query, activeStage = "STAGE_CAPTURE" } = req.body || {};
     if (!query) {
       return res.status(400).json({ error: "query is required" });
     }
@@ -172,7 +172,7 @@ botRouter.post("/api/bot/chat", async (req, res) => {
       return res.status(400).json({ error: "Message or image is required." });
     }
 
-    const tenantId = (req.headers["x-tenant-id"] as string) || req.body.tenantId || "default";
+    const tenantId = (req.headers["x-tenant-id"] as string) || req.body?.tenantId || "default";
 
     // Persist inbound user message
     sessionDB.addMessage({
@@ -272,7 +272,7 @@ botRouter.post("/api/bot/chat", async (req, res) => {
 
 // Clear session history
 botRouter.post("/api/bot/clear", (req, res) => {
-  const { sessionId = "default-session", tenantId = "default" } = req.body;
+  const { sessionId = "default-session", tenantId = "default" } = req.body || {};
   sessionDB.clearSession(sessionId, tenantId);
   res.json({ success: true, message: `Session ${sessionId} (tenant: ${tenantId}) reset.` });
 });
@@ -293,7 +293,7 @@ botRouter.post("/api/generate-bot-code", async (req, res) => {
       botType = "customer-support",
       customRequirements = "",
       features = ["session-memory", "vision-images", "system-prompts"],
-    } = req.body;
+    } = req.body || {};
 
     const ai = getGenAI();
 

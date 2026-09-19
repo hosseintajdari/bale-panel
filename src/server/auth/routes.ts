@@ -46,13 +46,15 @@ authRouter.get("/api/admin/keys", (req, res) => {
 });
 
 authRouter.post("/api/admin/keys", (req, res) => {
-  const { name, role = "operator", tenantId = "default" } = req.body;
-  if (!name || typeof name !== "string") {
+  const { name, role = "operator", tenantId = "default" } = req.body || {};
+  if (!name || typeof name !== "string" || !name.trim()) {
     return res.status(400).json({ error: "Name is required for API key." });
   }
   if (!["admin", "operator", "auditor"].includes(role)) {
     return res.status(400).json({ error: "Invalid role. Must be 'admin', 'operator', or 'auditor'." });
   }
+
+  const cleanTenantId = typeof tenantId === "string" && tenantId.trim() ? tenantId.trim() : "default";
 
   // Generate a random high-entropy token
   const rawToken = `emb_${role}_${crypto.randomBytes(24).toString("hex")}`;
@@ -64,7 +66,7 @@ authRouter.post("/api/admin/keys", (req, res) => {
     tokenHash,
     name: name.trim(),
     role: role as UserRole,
-    tenantId: tenantId.trim(),
+    tenantId: cleanTenantId,
   });
 
   // Return the plaintext token once upon creation
@@ -72,9 +74,9 @@ authRouter.post("/api/admin/keys", (req, res) => {
     success: true,
     key: {
       id,
-      name,
+      name: name.trim(),
       role,
-      tenantId,
+      tenantId: cleanTenantId,
       rawToken,
     },
   });
