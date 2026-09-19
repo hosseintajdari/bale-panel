@@ -12,10 +12,10 @@ adminRouter.get("/api/admin/integrations", (req, res) => {
 });
 
 adminRouter.post("/api/admin/integrations/toggle", (req, res) => {
-  const { field, value } = req.body;
+  const { field, value } = req.body || {};
   if (field === "activeAiProvider") {
     adminIntegrationState.activeAiProvider = value;
-  } else if (field in adminIntegrationState.pipelinePermissions) {
+  } else if (field && field in adminIntegrationState.pipelinePermissions) {
     (adminIntegrationState.pipelinePermissions as any)[field] = value;
   }
   res.json({ success: true, data: adminIntegrationState });
@@ -79,7 +79,7 @@ adminRouter.get("/api/admin/telegram/keyboards", (req, res) => {
 });
 
 adminRouter.post("/api/admin/telegram/keyboards", (req, res) => {
-  const { id, name, schemaJson } = req.body;
+  const { id, name, schemaJson } = req.body || {};
   if (!name || !schemaJson) {
     return res.status(400).json({ error: "name and schemaJson are required" });
   }
@@ -99,7 +99,7 @@ adminRouter.get("/api/admin/telegram/webapps", (req, res) => {
 });
 
 adminRouter.post("/api/admin/telegram/webapps", (req, res) => {
-  const { id, name, url, configJson } = req.body;
+  const { id, name, url, configJson } = req.body || {};
   if (!name || !url) {
     return res.status(400).json({ error: "name and url are required" });
   }

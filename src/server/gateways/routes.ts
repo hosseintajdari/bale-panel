@@ -21,7 +21,7 @@ gatewayRouter.get("/api/system/pulse-settings", (req, res) => {
 });
 
 gatewayRouter.post("/api/system/pulse-settings", (req, res) => {
-  const { enabled, gateways, refreshIntervalSec, alertOnJitterThresholdMs } = req.body;
+  const { enabled, gateways, refreshIntervalSec, alertOnJitterThresholdMs } = req.body || {};
   if (typeof enabled === "boolean") {
     gatewayPulseConfig.enabled = enabled;
   }
@@ -232,7 +232,7 @@ gatewayRouter.post("/api/gateways/history/clear", (req, res) => {
 
 // Channel Gateway Status Transition Endpoint
 gatewayRouter.post("/api/gateways/status", (req, res) => {
-  const { channelId, status, reason } = req.body;
+  const { channelId, status, reason } = req.body || {};
   const validChannels = ["whatsapp", "bale", "telegram", "sms"];
   const validStatuses = ["active", "standby", "disconnected"];
 

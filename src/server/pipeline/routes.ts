@@ -30,9 +30,9 @@ pipelineRouter.get("/api/pipeline/state", (req, res) => {
 // Ingest Shadow Trace from Backend Engines
 pipelineRouter.post("/api/pipeline/ingest/shadow-trace", (req, res) => {
   try {
-    const { engine_id, shadow_item } = req.body;
-    if (!engine_id || !shadow_item) {
-      return res.status(400).json({ error: "Missing required fields" });
+    const { engine_id, shadow_item } = req.body || {};
+    if (!engine_id || typeof engine_id !== "string" || !shadow_item || typeof shadow_item !== "object") {
+      return res.status(400).json({ error: "Missing or invalid required fields: engine_id and shadow_item" });
     }
 
     const record: ShadowRecord = {
@@ -91,6 +91,9 @@ pipelineRouter.post("/api/pipeline/process", async (req, res) => {
 pipelineRouter.post("/api/pipeline/shadow/action", async (req, res) => {
   try {
     const { id, action, editedReply } = req.body || {};
+    if (!id || typeof id !== "string") {
+      return res.status(400).json({ error: "Shadow item id is required." });
+    }
     const item = shadowDB.getById(id);
     if (!item) {
       return res.status(404).json({ error: "Shadow item not found." });
