@@ -12,6 +12,10 @@ interface PipelineState {
   setEnvironmentMode: (mode: 'shadow' | 'live') => void;
   setActiveSessionId: (id: string) => void;
   setShadowQueue: (queue: ShadowReviewItem[]) => void;
+  /** SSE: prepend a new record received from the stream */
+  addToQueue: (record: ShadowReviewItem) => void;
+  /** SSE: partially update an existing record by id */
+  updateQueueItem: (id: string, patch: Partial<ShadowReviewItem>) => void;
 
   processMessage: (channel: ChannelPlatform, senderDisplay: string, text: string) => Promise<void>;
   handleShadowAction: (id: string, action: 'approve' | 'reject' | 'modify', editedReply?: string) => Promise<void>;
@@ -28,6 +32,16 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   setEnvironmentMode: (mode) => set({ environmentMode: mode }),
   setActiveSessionId: (id) => set({ activeSessionId: id }),
   setShadowQueue: (queue) => set({ shadowQueue: queue }),
+
+  addToQueue: (record) =>
+    set((state) => ({ shadowQueue: [record, ...state.shadowQueue] })),
+
+  updateQueueItem: (id, patch) =>
+    set((state) => ({
+      shadowQueue: state.shadowQueue.map((item) =>
+        item.id === id ? { ...item, ...patch } : item
+      ),
+    })),
 
   processMessage: async (channel, senderDisplay, text) => {
     const { activeSessionId, environmentMode } = get();

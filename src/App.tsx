@@ -17,6 +17,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { usePipelineStore } from './store/usePipelineStore';
 import { useAppStore } from './store/useAppStore';
 import { authFetch } from './utils/api';
+import { useShadowStream } from './hooks/useShadowStream';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -53,6 +54,9 @@ export default function App() {
     fetchInitialState: fetchAppInitialState,
     triggerPulsePing,
   } = useAppStore();
+
+  // SSE: subscribe to real-time shadow queue updates from the server (Refs #8 Phase 6a)
+  useShadowStream();
 
   useEffect(() => {
     authFetch('/api/auth/session')
