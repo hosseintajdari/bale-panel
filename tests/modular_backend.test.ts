@@ -225,6 +225,72 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(authAdmin.status, 200);
     assert.equal(authAdmin.body.success, true);
     assert.ok(Array.isArray(authAdmin.body.keys));
+
+    // Validation: POST /api/admin/keys requires valid name and role
+    const emptyNameRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "   ", role: "auditor" },
+    });
+    assert.equal(emptyNameRes.status, 400);
+
+    const invalidRoleRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Test Key", role: "superadmin" },
+    });
+    assert.equal(invalidRoleRes.status, 400);
+
+    // Create an Auditor API Key
+    const createKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Auditor Bot", role: "auditor", tenantId: "clinical-branch-1" },
+    });
+    assert.equal(createKeyRes.status, 200);
+    assert.equal(createKeyRes.body.success, true);
+    const auditorToken = createKeyRes.body.key.rawToken;
+    const auditorKeyId = createKeyRes.body.key.id;
+    assert.ok(auditorToken.startsWith("emb_auditor_"));
+
+    // Auditor key can access auditor-allowed route (/api/gateways/pulse-ping)
+    const auditorAccessRes = await request(testServer, {
+      method: "POST",
+      path: "/api/gateways/pulse-ping",
+      headers: { Authorization: `Bearer ${auditorToken}` },
+      body: {},
+    });
+    assert.equal(auditorAccessRes.status, 200);
+
+    // Auditor key CANNOT access admin-only route (/api/admin/keys) -> 403 Forbidden
+    const auditorForbiddenRes = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${auditorToken}` },
+    });
+    assert.equal(auditorForbiddenRes.status, 403);
+    assert.ok(auditorForbiddenRes.body.error.includes("Forbidden"));
+
+    // Revoke key: DELETE /api/admin/keys/:id
+    const deleteKeyRes = await request(testServer, {
+      method: "DELETE",
+      path: `/api/admin/keys/${auditorKeyId}`,
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+    });
+    assert.equal(deleteKeyRes.status, 200);
+    assert.equal(deleteKeyRes.body.success, true);
+
+    // Revoked key can no longer authenticate -> 401 Unauthorized
+    const postDeleteRes = await request(testServer, {
+      method: "POST",
+      path: "/api/gateways/pulse-ping",
+      headers: { Authorization: `Bearer ${auditorToken}` },
+      body: {},
+    });
+    assert.equal(postDeleteRes.status, 401);
   });
 
   await t.test("7. HTTP Endpoints: Vault Credentials Management", async () => {
@@ -321,6 +387,60 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(actionRes.status, 200);
     assert.equal(actionRes.body.success, true);
     assert.equal(actionRes.body.item.status, "approved");
+
+    // 8.4 Ingest Shadow Trace from Backend Engines (bale-auto/bale-med/Bale-EMS contract)
+    const ingestBadRes = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/ingest/shadow-trace",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(ingestBadRes.status, 400);
+
+    const externalRecordId = `sh-ext-${Date.now()}`;
+    const ingestOkRes = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/ingest/shadow-trace",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {
+        engine_id: "bale-med",
+        shadow_item: {
+          id: externalRecordId,
+          sessionId: "bale-chat-999",
+          channel: "bale",
+          senderDisplay: "دکتر رضایی",
+          userMessage: "دستور مصرف آموکسی‌سیلین ۵۰۰",
+          proposedReply: "هر ۸ ساعت یک عدد میل شود.",
+          status: "pending",
+          riskLevel: "medium_risk",
+        },
+      },
+    });
+    assert.equal(ingestOkRes.status, 200);
+    assert.equal(ingestOkRes.body.success, true);
+
+    // 8.5 HITL Action: Reject Shadow Record
+    const rejectRes = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/shadow/action",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {
+        id: externalRecordId,
+        action: "reject",
+      },
+    });
+    assert.equal(rejectRes.status, 200);
+    assert.equal(rejectRes.body.success, true);
+    assert.equal(rejectRes.body.item.status, "rejected");
+
+    // 8.6 HITL Action Validation: missing id returns 400
+    const missingIdRes = await request(testServer, {
+      method: "POST",
+      path: "/api/pipeline/shadow/action",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { action: "approve" },
+    });
+    assert.equal(missingIdRes.status, 400);
   });
 
   await t.test("9. HTTP Endpoints: Webhook Ingress (Bale & Evolution)", async () => {
@@ -368,6 +488,25 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(waOk.status, 200);
     assert.equal(waOk.body.status, "received");
+
+    // 9.4 Bale Webhook Empty Body Resilience -> 200 OK
+    const baleEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/webhook/bale",
+      headers: { "x-telegram-bot-api-secret-token": BALE_WEBHOOK_SECRET },
+      body: {},
+    });
+    assert.equal(baleEmptyRes.status, 200);
+    assert.equal(baleEmptyRes.body.ok, true);
+
+    // 9.5 Evolution Webhook Empty Body Resilience -> 200 OK
+    const waEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/webhook/evolution",
+      body: {},
+    });
+    assert.equal(waEmptyRes.status, 200);
+    assert.equal(waEmptyRes.body.status, "received");
   });
 
   await t.test("10. HTTP Endpoints: Gateways Telemetry & Audit History", async () => {
@@ -401,11 +540,47 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(statusRes.status, 200);
     assert.equal(statusRes.body.status, "active");
 
+    // 10.3b Gateway status validation: empty body and invalid channel/status
+    const statusEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/gateways/status",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(statusEmptyRes.status, 400);
+
+    const statusInvalidChannel = await request(testServer, {
+      method: "POST",
+      path: "/api/gateways/status",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { channelId: "unknown_channel", status: "active" },
+    });
+    assert.equal(statusInvalidChannel.status, 400);
+
+    const statusInvalidStatus = await request(testServer, {
+      method: "POST",
+      path: "/api/gateways/status",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { channelId: "telegram", status: "invalid_status" },
+    });
+    assert.equal(statusInvalidStatus.status, 400);
+
+    // 10.3c Pulse settings empty body safe handling
+    const pulseEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/system/pulse-settings",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(pulseEmptyRes.status, 200);
+    assert.equal(pulseEmptyRes.body.success, true);
+
     // 10.4 Gateway history
     const histRes = await request(testServer, {
       method: "GET",
       path: "/api/gateways/history",
       headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: undefined,
     });
     assert.equal(histRes.status, 200);
     assert.equal(histRes.body.success, true);
@@ -422,7 +597,24 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(ledgerList.status, 200);
     assert.ok(Array.isArray(ledgerList.body.items));
 
-    // 11.2 Add ledger item
+    // 11.2 Validation: reject empty/missing title
+    const emptyTitleRes = await request(testServer, {
+      method: "POST",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { title: "   " },
+    });
+    assert.equal(emptyTitleRes.status, 400);
+
+    const emptyBodyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(emptyBodyRes.status, 400);
+
+    // 11.3 Add ledger item
     const addLedger = await request(testServer, {
       method: "POST",
       path: "/api/ledger/items",
@@ -435,8 +627,52 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(addLedger.status, 200);
     assert.equal(addLedger.body.success, true);
+    assert.ok(addLedger.body.item);
+    const createdId = addLedger.body.item.id;
 
-    // 11.3 Privacy settings toggle
+    // 11.4 PATCH update ledger item
+    const patchRes = await request(testServer, {
+      method: "PATCH",
+      path: `/api/ledger/items/${createdId}`,
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {
+        title: "عنوان به‌روزشده در آزمون واحد",
+        tasksPending: 0,
+      },
+    });
+    assert.equal(patchRes.status, 200);
+    assert.equal(patchRes.body.success, true);
+    assert.equal(patchRes.body.item.title, "عنوان به‌روزشده در آزمون واحد");
+    assert.equal(patchRes.body.item.tasksPending, 0);
+
+    // PATCH non-existent item returns 404
+    const patchNotFound = await request(testServer, {
+      method: "PATCH",
+      path: "/api/ledger/items/wld-nonexistent",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { title: "عدم وجود" },
+    });
+    assert.equal(patchNotFound.status, 404);
+
+    // 11.5 DELETE ledger item
+    const delRes = await request(testServer, {
+      method: "DELETE",
+      path: `/api/ledger/items/${createdId}`,
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+    });
+    assert.equal(delRes.status, 200);
+    assert.equal(delRes.body.success, true);
+    assert.equal(delRes.body.removed.id, createdId);
+
+    // DELETE non-existent item returns 404
+    const delNotFound = await request(testServer, {
+      method: "DELETE",
+      path: `/api/ledger/items/${createdId}`,
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+    });
+    assert.equal(delNotFound.status, 404);
+
+    // 11.6 Privacy settings toggle
     const privacyRes = await request(testServer, {
       method: "POST",
       path: "/api/system/privacy-settings",
@@ -445,6 +681,15 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(privacyRes.status, 200);
     assert.equal(privacyRes.body.settings.retentionPolicy, "ephemeral");
+
+    // Empty body does not crash privacy settings
+    const privacyEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/system/privacy-settings",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(privacyEmptyRes.status, 200);
 
     // Reset back to audited
     await request(testServer, {
@@ -490,7 +735,16 @@ test("Modular Backend Test Suite", async (t) => {
   });
 
   await t.test("13. HTTP Endpoints: Admin Telegram Keyboards & WebApps", async () => {
-    // Keyboards CRUD
+    // 13.1 Validation: Keyboard creation rejects empty payload
+    const kbEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/telegram/keyboards",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(kbEmptyRes.status, 400);
+
+    // 13.2 Keyboards CRUD
     const kbCreate = await request(testServer, {
       method: "POST",
       path: "/api/admin/telegram/keyboards",
@@ -519,6 +773,45 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(kbDel.status, 200);
     assert.equal(kbDel.body.success, true);
+
+    // 13.3 WebApps CRUD
+    const waEmptyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/telegram/webapps",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {},
+    });
+    assert.equal(waEmptyRes.status, 400);
+
+    const waCreate = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/telegram/webapps",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: {
+        id: "test-wa-1",
+        name: "Test WebApp",
+        url: "https://bale.ai/app",
+        configJson: JSON.stringify({ version: "1.0" }),
+      },
+    });
+    assert.equal(waCreate.status, 200);
+    assert.equal(waCreate.body.webapp.id, "test-wa-1");
+
+    const waList = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/telegram/webapps",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+    });
+    assert.equal(waList.status, 200);
+    assert.ok(waList.body.webapps.some((w: any) => w.id === "test-wa-1"));
+
+    const waDel = await request(testServer, {
+      method: "DELETE",
+      path: "/api/admin/telegram/webapps/test-wa-1",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+    });
+    assert.equal(waDel.status, 200);
+    assert.equal(waDel.body.success, true);
   });
 
   await t.test("14. Edge Cases, Tamper Detection & Error Paths", async () => {

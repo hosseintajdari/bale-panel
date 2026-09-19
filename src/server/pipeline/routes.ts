@@ -99,9 +99,9 @@ pipelineRouter.get("/api/health", (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (req: Request, res: Response) => {
   try {
-    const { engine_id, shadow_item } = req.body;
-    if (!engine_id || !shadow_item) {
-      return res.status(400).json({ error: "Missing required fields: engine_id and shadow_item" });
+    const { engine_id, shadow_item } = req.body || {};
+    if (!engine_id || typeof engine_id !== "string" || !shadow_item || typeof shadow_item !== "object") {
+      return res.status(400).json({ error: "Missing or invalid required fields: engine_id and shadow_item" });
     }
     if (!shadow_item.userMessage || !shadow_item.proposedReply) {
       return res.status(400).json({ error: "shadow_item must include userMessage and proposedReply" });
@@ -175,6 +175,9 @@ pipelineRouter.post("/api/pipeline/process", async (req: Request, res: Response)
 pipelineRouter.post("/api/pipeline/shadow/action", async (req: Request, res: Response) => {
   try {
     const { id, action, editedReply } = req.body || {};
+    if (!id || typeof id !== "string") {
+      return res.status(400).json({ error: "Shadow item id is required." });
+    }
     const item = shadowDB.getById(id);
     if (!item) {
       return res.status(404).json({ error: "Shadow item not found." });
