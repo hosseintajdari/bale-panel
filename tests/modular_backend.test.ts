@@ -1170,4 +1170,339 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(unauthStream.status, 401);
   });
+
+  await t.test("21. Phase 2: Admin Authentication, Multi-Credential RBAC & Session Parity", async () => {
+    // 21.1 Unauthenticated requests to all /api/admin/* and /api/system/* endpoints return 401
+    const adminEndpoints = [
+      { method: "GET" as const, path: "/api/admin/keys" },
+      { method: "GET" as const, path: "/api/admin/integrations" },
+      { method: "POST" as const, path: "/api/admin/integrations/toggle", body: { field: "activeAiProvider", value: "gemini" } },
+      { method: "POST" as const, path: "/api/admin/sandbox/create", body: { guestName: "Hacker" } },
+      { method: "GET" as const, path: "/api/admin/telegram/keyboards" },
+      { method: "GET" as const, path: "/api/admin/telegram/webapps" },
+      { method: "GET" as const, path: "/api/admin/auth-credentials" },
+      { method: "GET" as const, path: "/api/system/pulse-settings" },
+    ];
+
+    for (const ep of adminEndpoints) {
+      const res = await request(testServer, {
+        method: ep.method,
+        path: ep.path,
+        body: ep.body,
+      });
+      assert.equal(res.status, 401, `Expected 401 for unauthenticated ${ep.method} ${ep.path}, got ${res.status}`);
+    }
+
+    // 21.2 Create Operator and Admin API keys for RBAC evaluation
+    const opKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Operator Bot", role: "operator", tenantId: "ops-tenant" },
+    });
+    assert.equal(opKeyRes.status, 200);
+    const opToken = opKeyRes.body.key.rawToken;
+    assert.ok(opToken.startsWith("emb_operator_"));
+
+    const admKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Secondary Admin", role: "admin", tenantId: "admin-tenant" },
+    });
+    assert.equal(admKeyRes.status, 200);
+    const admToken = admKeyRes.body.key.rawToken;
+    assert.ok(admToken.startsWith("emb_admin_"));
+
+    // 21.3 Operator role lacks admin privilege -> 403 Forbidden on all admin routes
+    for (const ep of adminEndpoints) {
+      const res = await request(testServer, {
+        method: ep.method,
+        path: ep.path,
+        headers: { Authorization: `Bearer ${opToken}` },
+        body: ep.body,
+      });
+      assert.equal(res.status, 403, `Expected 403 for operator ${ep.method} ${ep.path}, got ${res.status}`);
+      assert.ok(res.body.error.includes("Forbidden"));
+    }
+
+    // 21.4 Admin role API Key possesses full admin authority -> 200 OK on admin routes
+    const admKeysRes = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${admToken}` },
+    });
+    assert.equal(admKeysRes.status, 200);
+    assert.equal(admKeysRes.body.success, true);
+
+    const admIntegrationsRes = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/integrations",
+      headers: { Authorization: `Bearer ${admToken}` },
+    });
+    assert.equal(admIntegrationsRes.status, 200);
+    assert.equal(admIntegrationsRes.body.success, true);
+
+    const admVaultRes = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/auth-credentials",
+      headers: { Authorization: `Bearer ${admToken}` },
+    });
+    assert.equal(admVaultRes.status, 200);
+    assert.equal(admVaultRes.body.success, true);
+
+    const admTelegramRes = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/telegram/keyboards",
+      headers: { Authorization: `Bearer ${admToken}` },
+    });
+    assert.equal(admTelegramRes.status, 200);
+
+    // 21.5 Admin Login with Admin API Key via POST /api/auth/login
+    // Non-admin operator token fails login -> 401
+    const opLoginRes = await request(testServer, {
+      method: "POST",
+      path: "/api/auth/login",
+      body: { secret: opToken },
+    });
+    assert.equal(opLoginRes.status, 401);
+
+    // Admin API token succeeds login -> 200 + Session Cookie with admin role
+    const admLoginRes = await request(testServer, {
+      method: "POST",
+      path: "/api/auth/login",
+      body: { secret: admToken },
+    });
+    assert.equal(admLoginRes.status, 200);
+    assert.equal(admLoginRes.body.authenticated, true);
+    assert.equal(admLoginRes.body.role, "admin");
+    const admCookie = admLoginRes.headers["set-cookie"]?.[0] || "";
+    assert.ok(admCookie.includes("bale_panel_session="));
+
+    // 21.6 Session established via Admin Key authorizes protected admin routes
+    const sessionAdminAccess = await request(testServer, {
+      method: "GET",
+      path: "/api/admin/keys",
+      headers: { Cookie: admCookie },
+    });
+    assert.equal(sessionAdminAccess.status, 200);
+    assert.equal(sessionAdminAccess.body.success, true);
+
+    // 21.7 Session status endpoint returns complete authenticated metadata
+    const sessionCheck = await request(testServer, {
+      method: "GET",
+      path: "/api/auth/session",
+      headers: { Cookie: admCookie },
+    });
+    assert.equal(sessionCheck.status, 200);
+    assert.equal(sessionCheck.body.authenticated, true);
+    assert.equal(sessionCheck.body.role, "admin");
+    assert.equal(sessionCheck.body.name, "Secondary Admin");
+  });
+
+  await t.test("22. Phase 2: Work Ledger Integration, RBAC Guardrails & Privacy Settings Contract", async () => {
+    // 22.1 Create distinct API keys for Auditor, Operator, and Admin roles
+    const auditorKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Auditor Key", role: "auditor", tenantId: "audit-tenant" },
+    });
+    assert.equal(auditorKeyRes.status, 200);
+    const auditorToken = auditorKeyRes.body.key.rawToken;
+
+    const operatorKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Ledger Operator Key", role: "operator", tenantId: "ops-tenant" },
+    });
+    assert.equal(operatorKeyRes.status, 200);
+    const operatorToken = operatorKeyRes.body.key.rawToken;
+
+    // 22.2 Work Ledger Unauthenticated Access -> 401 Unauthorized
+    const unauthLedgerGet = await request(testServer, {
+      method: "GET",
+      path: "/api/ledger/items",
+    });
+    assert.equal(unauthLedgerGet.status, 401);
+    assert.equal(unauthLedgerGet.body.error, "Unauthorized. Valid Bearer token required.");
+
+    const unauthLedgerPost = await request(testServer, {
+      method: "POST",
+      path: "/api/ledger/items",
+      body: { title: "تست غیرمجاز" },
+    });
+    assert.equal(unauthLedgerPost.status, 401);
+
+    const unauthLedgerPatch = await request(testServer, {
+      method: "PATCH",
+      path: "/api/ledger/items/wld-any-id",
+      body: { title: "تست پچ غیرمجاز" },
+    });
+    assert.equal(unauthLedgerPatch.status, 401);
+
+    const unauthLedgerDelete = await request(testServer, {
+      method: "DELETE",
+      path: "/api/ledger/items/wld-any-id",
+    });
+    assert.equal(unauthLedgerDelete.status, 401);
+
+    // 22.3 Auditor Role RBAC Guard -> 403 Forbidden (Auditor lacks operator privileges for ledger)
+    const auditorLedgerGet = await request(testServer, {
+      method: "GET",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${auditorToken}` },
+    });
+    assert.equal(auditorLedgerGet.status, 403);
+    assert.ok(auditorLedgerGet.body.error.includes("Forbidden"));
+
+    const auditorLedgerPost = await request(testServer, {
+      method: "POST",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${auditorToken}` },
+      body: { title: "تست توسط حسابرس" },
+    });
+    assert.equal(auditorLedgerPost.status, 403);
+
+    // 22.4 Operator Role RBAC -> 200 OK for Ledger List & Validation
+    const opLedgerGet = await request(testServer, {
+      method: "GET",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    assert.equal(opLedgerGet.status, 200);
+    assert.equal(opLedgerGet.body.success, true);
+    assert.ok(Array.isArray(opLedgerGet.body.items));
+
+    // Validation: Empty or blank title returns 400
+    const opEmptyTitle = await request(testServer, {
+      method: "POST",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+      body: { title: "   " },
+    });
+    assert.equal(opEmptyTitle.status, 400);
+
+    // 22.5 Full Ledger Lifecycle Integration (Create -> Read -> Update -> Verify -> Delete)
+    const createLedgerRes = await request(testServer, {
+      method: "POST",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+      body: {
+        title: "پرونده بالینی اورژانس - Bale-EMS Shadow Ingest",
+        domainCategory: "Clinical",
+        summary: "انتقال خودکار نسخه الکترونیک به دفتر کار",
+        activeContext: "اتاق عملیات تریاژ",
+      },
+    });
+    assert.equal(createLedgerRes.status, 200);
+    assert.equal(createLedgerRes.body.success, true);
+    const createdItem = createLedgerRes.body.item;
+    assert.ok(createdItem.id.startsWith("wld-"));
+    assert.equal(createdItem.title, "پرونده بالینی اورژانس - Bale-EMS Shadow Ingest");
+    assert.equal(createdItem.domainCategory, "Clinical");
+    assert.equal(createdItem.tasksPending, 1);
+
+    // Verify item is present in list retrieved by operator
+    const listAfterCreate = await request(testServer, {
+      method: "GET",
+      path: "/api/ledger/items",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    assert.equal(listAfterCreate.status, 200);
+    const foundItem = listAfterCreate.body.items.find((it: any) => it.id === createdItem.id);
+    assert.ok(foundItem, "Created ledger item must be present in ledger list");
+
+    // PATCH item status and title
+    const patchLedgerRes = await request(testServer, {
+      method: "PATCH",
+      path: `/api/ledger/items/${createdItem.id}`,
+      headers: { Authorization: `Bearer ${operatorToken}` },
+      body: {
+        title: "پرونده بالینی اورژانس - تایید پزشک نهایی شد",
+        tasksPending: 0,
+      },
+    });
+    assert.equal(patchLedgerRes.status, 200);
+    assert.equal(patchLedgerRes.body.success, true);
+    assert.equal(patchLedgerRes.body.item.title, "پرونده بالینی اورژانس - تایید پزشک نهایی شد");
+    assert.equal(patchLedgerRes.body.item.tasksPending, 0);
+
+    // DELETE item with operator token
+    const deleteLedgerRes = await request(testServer, {
+      method: "DELETE",
+      path: `/api/ledger/items/${createdItem.id}`,
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    assert.equal(deleteLedgerRes.status, 200);
+    assert.equal(deleteLedgerRes.body.success, true);
+    assert.equal(deleteLedgerRes.body.removed.id, createdItem.id);
+
+    // Verify 404 on already-deleted item
+    const repeatDeleteRes = await request(testServer, {
+      method: "DELETE",
+      path: `/api/ledger/items/${createdItem.id}`,
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    assert.equal(repeatDeleteRes.status, 404);
+
+    // 22.6 Privacy Settings Integration & Admin Auth Guardrails
+    // Unauthenticated GET /api/system/privacy-settings -> 401
+    const unauthPrivacyGet = await request(testServer, {
+      method: "GET",
+      path: "/api/system/privacy-settings",
+    });
+    assert.equal(unauthPrivacyGet.status, 401);
+
+    // Operator token attempting GET /api/system/privacy-settings -> 403 (guarded by requireAdminAuth)
+    const operatorPrivacyGet = await request(testServer, {
+      method: "GET",
+      path: "/api/system/privacy-settings",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    assert.equal(operatorPrivacyGet.status, 403);
+    assert.ok(operatorPrivacyGet.body.error.includes("Forbidden"));
+
+    // Operator token attempting POST /api/system/privacy-settings -> 403
+    const operatorPrivacyPost = await request(testServer, {
+      method: "POST",
+      path: "/api/system/privacy-settings",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+      body: { retentionPolicy: "ephemeral" },
+    });
+    assert.equal(operatorPrivacyPost.status, 403);
+
+    // Admin Key authorized GET /api/system/privacy-settings -> 200
+    const adminPrivacyGet = await request(testServer, {
+      method: "GET",
+      path: "/api/system/privacy-settings",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+    });
+    assert.equal(adminPrivacyGet.status, 200);
+    assert.equal(adminPrivacyGet.body.success, true);
+    assert.ok(adminPrivacyGet.body.settings.retentionPolicy);
+
+    // Admin Key authorized POST /api/system/privacy-settings -> toggle to ephemeral
+    const adminPrivacyToggleEphemeral = await request(testServer, {
+      method: "POST",
+      path: "/api/system/privacy-settings",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { retentionPolicy: "ephemeral", scrubSensitiveMedicalNotes: true },
+    });
+    assert.equal(adminPrivacyToggleEphemeral.status, 200);
+    assert.equal(adminPrivacyToggleEphemeral.body.settings.retentionPolicy, "ephemeral");
+    assert.equal(adminPrivacyToggleEphemeral.body.settings.scrubSensitiveMedicalNotes, true);
+
+    // Admin Key authorized POST /api/system/privacy-settings -> toggle back to audited
+    const adminPrivacyToggleAudited = await request(testServer, {
+      method: "POST",
+      path: "/api/system/privacy-settings",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { retentionPolicy: "audited", scrubSensitiveMedicalNotes: false },
+    });
+    assert.equal(adminPrivacyToggleAudited.status, 200);
+    assert.equal(adminPrivacyToggleAudited.body.settings.retentionPolicy, "audited");
+    assert.equal(adminPrivacyToggleAudited.body.settings.scrubSensitiveMedicalNotes, false);
+  });
 });

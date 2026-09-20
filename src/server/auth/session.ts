@@ -6,7 +6,13 @@ import type { AuthenticatedUser } from "./types.js";
 
 export const SESSION_COOKIE_NAME = "bale_panel_session";
 export const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-export const operatorSessions = new Map<string, number>();
+
+export interface SessionRecord {
+  expiresAt: number;
+  user: AuthenticatedUser;
+}
+
+export const operatorSessions = new Map<string, number | SessionRecord>();
 
 export function secureEquals(left: string, right: string): boolean {
   if (typeof left !== "string" || typeof right !== "string") return false;
@@ -23,19 +29,30 @@ export function readCookie(cookieHeader = "", name: string): string | null {
   return null;
 }
 
-export function createOperatorSession(): string {
+export function createOperatorSession(user?: AuthenticatedUser): string {
   const sessionId = crypto.randomBytes(32).toString("base64url");
-  operatorSessions.set(sessionId, Date.now() + SESSION_TTL_MS);
+  const sessionUserRecord: AuthenticatedUser = user || { role: "admin", tenantId: "system", name: "Local Operator" };
+  operatorSessions.set(sessionId, {
+    expiresAt: Date.now() + SESSION_TTL_MS,
+    user: sessionUserRecord,
+  });
   return sessionId;
 }
 
 export function sessionUser(cookieHeader = ""): AuthenticatedUser | null {
   const sessionId = readCookie(cookieHeader, SESSION_COOKIE_NAME);
   if (!sessionId) return null;
-  const expiresAt = operatorSessions.get(sessionId);
+  const entry = operatorSessions.get(sessionId);
+  if (!entry) return null;
+
+  const expiresAt = typeof entry === "number" ? entry : entry.expiresAt;
   if (!expiresAt || expiresAt <= Date.now()) {
-    if (sessionId) operatorSessions.delete(sessionId);
+    operatorSessions.delete(sessionId);
     return null;
+  }
+
+  if (typeof entry === "object" && entry.user) {
+    return entry.user;
   }
   return { role: "admin", tenantId: "system", name: "Local Operator" };
 }

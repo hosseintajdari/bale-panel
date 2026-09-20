@@ -19,17 +19,40 @@ export const authRouter = Router();
 
 authRouter.get("/api/auth/session", (req, res) => {
   const user = authenticateToken(req.headers["authorization"], req.headers.cookie);
-  res.json({ authenticated: Boolean(user) });
+  res.json({
+    authenticated: Boolean(user),
+    ...(user ? { role: user.role, name: user.name, tenantId: user.tenantId } : {}),
+  });
 });
 
 authRouter.post("/api/auth/login", (req, res) => {
-  const secret = typeof req.body?.secret === "string" ? req.body.secret : "";
-  if (!secureEquals(secret, PANEL_API_SECRET)) {
-    return res.status(401).json({ error: "Invalid operator secret." });
+  const secret = typeof req.body?.secret === "string" ? req.body.secret.trim() : "";
+  if (!secret) {
+    return res.status(401).json({ error: "Invalid operator secret or admin key." });
   }
 
-  setSessionCookie(res, createOperatorSession());
-  res.json({ authenticated: true });
+  let user: { role: UserRole; tenantId: string; name: string } | null = null;
+
+  if (secureEquals(secret, PANEL_API_SECRET)) {
+    user = { role: "admin", tenantId: "system", name: "SuperAdmin (Master Key)" };
+  } else {
+    const tokenHash = hashToken(secret);
+    const check = apiKeyDB.validateKey(tokenHash);
+    if (check.valid && check.role === "admin") {
+      user = {
+        role: "admin",
+        tenantId: check.tenantId || "default",
+        name: check.name || "Admin API Client",
+      };
+    }
+  }
+
+  if (!user) {
+    return res.status(401).json({ error: "Invalid operator secret or admin key." });
+  }
+
+  setSessionCookie(res, createOperatorSession(user));
+  res.json({ authenticated: true, role: user.role, name: user.name, tenantId: user.tenantId });
 });
 
 authRouter.post("/api/auth/logout", (req, res) => {

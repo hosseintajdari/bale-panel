@@ -22,6 +22,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { AuthCredentialItem, AuthCredentialService, AuthVaultStatus } from '../types';
+import { authFetch } from '../utils/api';
 
 interface AuthManagerProps {
   onCredentialsCountChange?: (count: number) => void;
@@ -54,7 +55,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
   const fetchCredentials = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/admin/auth-credentials');
+      const res = await authFetch('/api/admin/auth-credentials');
       const data = await res.json();
       if (data.success) {
         setCredentials(data.credentials || []);
@@ -111,7 +112,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
 
     try {
       setIsSubmitting(true);
-      const res = await fetch('/api/admin/auth-credentials', {
+      const res = await authFetch('/api/admin/auth-credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -146,7 +147,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
     }
 
     try {
-      const res = await fetch(`/api/admin/auth-credentials/${id}`, {
+      const res = await authFetch(`/api/admin/auth-credentials/${id}`, {
         method: 'DELETE',
       });
       const data = await res.json();
@@ -162,7 +163,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
     try {
       setIsTesting(id);
       setTestResult(null);
-      const res = await fetch(`/api/admin/auth-credentials/test/${id}`, {
+      const res = await authFetch(`/api/admin/auth-credentials/test/${id}`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -192,7 +193,7 @@ export const AuthManager: React.FC<AuthManagerProps> = ({ onCredentialsCountChan
 
   const handleOpenExport = async () => {
     try {
-      const res = await fetch('/api/admin/auth-credentials/env-export');
+      const res = await authFetch('/api/admin/auth-credentials/env-export');
       const data = await res.json();
       if (data.success) {
         setEnvExportText(data.envText);

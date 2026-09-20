@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { WorkLedgerItem, GlobalPrivacySettings } from '../types';
+import { authFetch } from '../utils/api';
 import {
   BookMarked,
   Clock,
@@ -80,7 +81,7 @@ export const WorkLedgerPanel: React.FC<WorkLedgerPanelProps> = ({
 
   const fetchLedger = async () => {
     try {
-      const res = await fetch('/api/ledger/items');
+      const res = await authFetch('/api/ledger/items');
       const data = await res.json();
       if (data.success && data.items) {
         setLedger(data.items);
@@ -109,7 +110,7 @@ export const WorkLedgerPanel: React.FC<WorkLedgerPanelProps> = ({
   const handleAddSession = async () => {
     if (!newTitle.trim()) return;
     try {
-      const res = await fetch('/api/ledger/items', {
+      const res = await authFetch('/api/ledger/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
