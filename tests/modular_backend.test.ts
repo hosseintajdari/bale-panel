@@ -1505,4 +1505,159 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(adminPrivacyToggleAudited.body.settings.retentionPolicy, "audited");
     assert.equal(adminPrivacyToggleAudited.body.settings.scrubSensitiveMedicalNotes, false);
   });
+
+  await t.test("23. Phase 4: Ingress Smoke Test, Real-Time SSE Stream & Channel Parity Contract", async () => {
+    // 23.1 Create an Operator API Key for scoped channel ingress
+    const opKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "WhatsApp Gateway Operator", role: "operator", tenantId: "wa-tenant" },
+    });
+    assert.equal(opKeyRes.status, 200);
+    const operatorToken = opKeyRes.body.key.rawToken;
+    assert.ok(operatorToken.startsWith("emb_operator_"));
+
+    // 23.2 Scoped RBAC validation for /api/evolution/inbound-message
+    // Unauthenticated -> 401
+    const unauthInbound = await request(testServer, {
+      method: "POST",
+      path: "/api/evolution/inbound-message",
+      body: { messageText: "سلام تست بدون احراز هویت" },
+    });
+    assert.equal(unauthInbound.status, 401);
+
+    // Auditor token -> 403 (Auditor cannot trigger inbound messages)
+    const auditorKeyRes = await request(testServer, {
+      method: "POST",
+      path: "/api/admin/keys",
+      headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      body: { name: "Auditor Observer", role: "auditor", tenantId: "audit-tenant" },
+    });
+    assert.equal(auditorKeyRes.status, 200);
+    const auditorToken = auditorKeyRes.body.key.rawToken;
+
+    const auditorInbound = await request(testServer, {
+      method: "POST",
+      path: "/api/evolution/inbound-message",
+      headers: { Authorization: `Bearer ${auditorToken}` },
+      body: { messageText: "تست حسابرس" },
+    });
+    assert.equal(auditorInbound.status, 403);
+
+    // 23.3 Establish real-time SSE stream connection on /api/pipeline/stream
+    const address = testServer.address() as any;
+    const sseEvents: Array<{ event: string; data: any }> = [];
+
+    const sseReq = http.request({
+      host: "127.0.0.1",
+      port: address.port,
+      method: "GET",
+      path: "/api/pipeline/stream",
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+
+    try {
+      const sseConnectedPromise = new Promise<void>((resolve) => {
+        let buffer = "";
+        sseReq.on("response", (res) => {
+          assert.equal(res.statusCode, 200);
+          assert.equal(res.headers["content-type"], "text/event-stream");
+
+          res.on("data", (chunk) => {
+            buffer += chunk.toString();
+            const blocks = buffer.split("\n\n");
+            buffer = blocks.pop() || "";
+            for (const block of blocks) {
+              if (!block.trim()) continue;
+              const lines = block.split("\n");
+              let eventName = "message";
+              let dataStr = "";
+              for (const l of lines) {
+                if (l.startsWith("event: ")) eventName = l.replace("event: ", "").trim();
+                if (l.startsWith("data: ")) dataStr = l.replace("data: ", "").trim();
+              }
+              try {
+                const parsed = JSON.parse(dataStr);
+                sseEvents.push({ event: eventName, data: parsed });
+                if (eventName === "ping") resolve();
+              } catch {
+                // ignore non-json
+              }
+            }
+          });
+        });
+      });
+
+      sseReq.end();
+      await sseConnectedPromise;
+      assert.ok(sseEvents.some((e) => e.event === "ping"));
+
+      // 23.4 End-to-End Ingress Smoke Test: WhatsApp inbound rare medicine query
+      const waInboundRes = await request(testServer, {
+        method: "POST",
+        path: "/api/evolution/inbound-message",
+        headers: { Authorization: `Bearer ${operatorToken}` },
+        body: {
+          senderPhone: "+989129998877",
+          senderName: "بیمار پیوندی",
+          messageText: "سلام، موجودی داروی هرسپتین سهمیه‌ای چطوره؟",
+          isInitiatedByCounterparty: true,
+        },
+      });
+
+      assert.equal(waInboundRes.status, 200);
+      assert.equal(waInboundRes.body.success, true);
+      assert.equal(waInboundRes.body.antiBanPassed, true);
+      assert.equal(waInboundRes.body.shadowRecord.riskLevel, "medium_risk");
+      assert.equal(
+        waInboundRes.body.shadowRecord.deterministicRuleApplied,
+        "RARE_MEDICINE_INQUIRY_GUARD (ADR-0002)"
+      );
+      assert.ok(waInboundRes.body.reply);
+      assert.ok(waInboundRes.body.trace && Array.isArray(waInboundRes.body.trace));
+
+      // Wait a brief tick for SSE event propagation
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Verify SSE received shadow-update event for this inbound message
+      const waEvent = sseEvents.find(
+        (e) => e.event === "shadow-update" && e.data.record?.id === waInboundRes.body.shadowRecord.id
+      );
+      assert.ok(waEvent, "SSE stream must receive real-time shadow-update event for WhatsApp inbound message");
+      assert.equal(waEvent.data.record.channel, "whatsapp");
+      assert.equal(waEvent.data.record.senderDisplay, "بیمار پیوندی");
+
+      // 23.5 Channel Parity: Bale Webhook Ingress & Rare Medicine Protocol
+      const initialBaleCount = sseEvents.filter((e) => e.event === "shadow-update").length;
+      const baleWebhookRes = await request(testServer, {
+        method: "POST",
+        path: "/webhook/bale",
+        headers: { "x-telegram-bot-api-secret-token": BALE_WEBHOOK_SECRET },
+        body: {
+          message: {
+            chat: { id: "987111222" },
+            from: { first_name: "مریم", last_name: "اکبری" },
+            text: "/rare IVIG",
+          },
+        },
+      });
+      assert.equal(baleWebhookRes.status, 200);
+      assert.equal(baleWebhookRes.body.ok, true);
+
+      // Wait for SSE broadcast
+      await new Promise((r) => setTimeout(r, 100));
+      const finalBaleCount = sseEvents.filter((e) => e.event === "shadow-update").length;
+      assert.ok(finalBaleCount > initialBaleCount, "Bale webhook message must broadcast shadow-update event to SSE stream");
+
+      const baleEvent = sseEvents.find(
+        (e) => e.event === "shadow-update" && e.data.record?.channel === "bale" && e.data.record?.userMessage?.includes("IVIG")
+      );
+      assert.ok(baleEvent, "SSE stream must capture Bale inbound message with rare medicine protocol");
+      assert.equal(baleEvent.data.record.riskLevel, "medium_risk");
+      assert.equal(baleEvent.data.record.deterministicRuleApplied, "RARE_MEDICINE_INQUIRY_GUARD (ADR-0002)");
+    } finally {
+      sseReq.destroy();
+    }
+  });
 });

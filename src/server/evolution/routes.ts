@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { globalPrivacySettings, serverLedgerItems } from "../ledger/index.js";
-import { processPipelineMessage } from "../pipeline/index.js";
+import { processPipelineMessage, shadowEventBus } from "../pipeline/index.js";
 import { evolutionInstanceState } from "./state.js";
 
 export const evolutionRouter = Router();
@@ -145,6 +145,9 @@ evolutionRouter.post("/api/evolution/inbound-message", async (req, res) => {
 
     evolutionInstanceState.lastInboundAt = "اکنون";
     evolutionInstanceState.antiBan.messagesSentToday += 1;
+
+    // Broadcast newly created shadow record to real-time SSE stream clients
+    shadowEventBus.emit("shadow-update", { type: "new", record: pipelineResult.record });
 
     res.json({
       success: true,

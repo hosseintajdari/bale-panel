@@ -2,7 +2,7 @@ import { Router } from "express";
 import { auditDB } from "../../lib/db/database.js";
 import { secureEquals } from "../auth/index.js";
 import { BALE_BOT_TOKEN, BALE_WEBHOOK_SECRET } from "../config.js";
-import { processPipelineMessage } from "../pipeline/index.js";
+import { processPipelineMessage, shadowEventBus } from "../pipeline/index.js";
 
 export const webhookRouter = Router();
 
@@ -28,7 +28,8 @@ webhookRouter.post("/webhook/evolution", async (req, res) => {
     if (!text) return;
 
     // Dispatch internally to pipeline process
-    await processPipelineMessage("whatsapp", senderId, senderDisplay, text, "WhatsApp User", "live");
+    const pipelineResult = await processPipelineMessage("whatsapp", senderId, senderDisplay, text, "WhatsApp User", "live");
+    shadowEventBus.emit("shadow-update", { type: "new", record: pipelineResult.record });
   } catch (error) {
     console.error("Evolution API Webhook Error:", error);
   }
@@ -83,8 +84,13 @@ webhookRouter.post("/webhook/bale", async (req, res) => {
       console.warn("[BALE WEBHOOK] Failed to record audit entry:", auditErr);
     }
 
+    // Determine domain context: clinical/medical query vs personal
+    const isClinical = /دارو|درمان|نسخه|بیمار|قرص|کپسول|تشنج|بیهوش|خونریزی|ivig|rare|قیمت/i.test(text) || text.startsWith("/");
+    const domainContext = isClinical ? "Clinical" : "Personal";
+
     // Run through pipeline
-    await processPipelineMessage("bale", chatId, senderName, text, "Personal", "shadow");
+    const pipelineResult = await processPipelineMessage("bale", chatId, senderName, text, domainContext, "shadow");
+    shadowEventBus.emit("shadow-update", { type: "new", record: pipelineResult.record });
   } catch (err) {
     console.error("[BALE WEBHOOK ERROR]:", err);
   }

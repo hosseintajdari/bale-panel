@@ -19,7 +19,7 @@ export async function processPipelineMessage(
   const startTime = Date.now();
 
   // 1. Check Deterministic Rules
-  const { isRedlineMedical, priceInfo, riskLevel, deterministicRule } = evaluateDeterministicRules(trimmed);
+  const { isRedlineMedical, priceInfo, riskLevel, deterministicRule, rareMedicineGuidance } = evaluateDeterministicRules(trimmed);
 
   // 2. Call Gemini
   let proposedReply = "";
@@ -34,6 +34,10 @@ Risk Level: ${riskLevel}
 
 Provide a concise, direct, helpful, and natural response in Persian. Avoid corporate fluff or generic AI apologies.`;
 
+    if (rareMedicineGuidance) {
+      prompt += `\n\nCRITICAL DETERMINISTIC DATA INJECTED (RARE MEDICINE PROTOCOL):\n${rareMedicineGuidance}`;
+    }
+
     if (priceInfo) {
       prompt += `\n\nCRITICAL DETERMINISTIC DATA INJECTED (DO NOT ALTER PRICES):\n${priceInfo}`;
     }
@@ -47,7 +51,9 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
   } catch {
     proposedReply = isRedlineMedical
       ? "هشدار: مورد ارجاع اورژانسی. با شماره ۱۱۵ تماس گرفته شود."
-      : `پیام در سامانه ثبت شد و در خط لوله ${channel} پردازش گردید.`;
+      : (rareMedicineGuidance || (priceInfo
+          ? `استعلام دارویی انجام شد:${priceInfo}`
+          : `پیام در سامانه ثبت شد و در خط لوله ${channel} پردازش گردید.`));
   }
 
   const isBaleAutoPersonal = domainContext === "Personal" || domainContext === "bale-auto";
