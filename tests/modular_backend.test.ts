@@ -1660,4 +1660,157 @@ test("Modular Backend Test Suite", async (t) => {
       sseReq.destroy();
     }
   });
+
+  await t.test("24. Phase 6: Real Backend Engine Telemetry Ingest & SSE Live Trace Broadcast", async () => {
+    const ssePort = (testServer.address() as any).port;
+
+    // Connect SSE client
+    const sseEvents: Array<{ event: string; data: any }> = [];
+    const sseReq = http.request({
+      hostname: "127.0.0.1",
+      port: ssePort,
+      path: "/api/pipeline/stream",
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${PANEL_API_SECRET}`,
+        Accept: "text/event-stream",
+      },
+    });
+
+    sseReq.on("response", (res) => {
+      let buffer = "";
+      res.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+        for (const part of parts) {
+          const lines = part.split("\n");
+          let event = "message";
+          let data = "";
+          for (const line of lines) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+            if (line.startsWith("data:")) data = line.slice(5).trim();
+          }
+          if (data) {
+            try {
+              sseEvents.push({ event, data: JSON.parse(data) });
+            } catch {
+              sseEvents.push({ event, data });
+            }
+          }
+        }
+      });
+    });
+    sseReq.end();
+
+    // Wait for SSE handshake ping
+    await new Promise((r) => setTimeout(r, 100));
+
+    try {
+      // 24.1 Ingest telemetry from bale-med clinical engine
+      const medTraceSteps = [
+        { stage: "GATEWAY_INGEST", title: "Bale Messenger Webhook Ingest", status: "passed", detail: "Parsed prescription inquiry", durationMs: 4 },
+        { stage: "CLINICAL_CLASSIFICATION", title: "Clinical Triage & Redlines", status: "passed", detail: "Disposition: standard | Reason: none", durationMs: 12 },
+        { stage: "DETERMINISTIC_RULES", title: "Deterministic Safety Rules", status: "passed", detail: "Rule: standard_catalog", durationMs: 6 },
+        { stage: "SHADOW_DISPOSITION", title: "Shadow Review Dispatch", status: "passed", detail: "Queued for clinical pharmacist review", durationMs: 3 },
+      ];
+
+      const medIngestRes = await request(testServer, {
+        method: "POST",
+        path: "/api/pipeline/ingest/shadow-trace",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+        body: {
+          engine_id: "bale-med",
+          shadow_item: {
+            id: `bmed-live-${Date.now()}`,
+            sessionId: "bale-clinical-987654",
+            channel: "bale",
+            senderDisplay: "داروخانه مرکزی تهران",
+            userMessage: "سلام، شربت دیفن‌هیدرامین برای کودک ۲ ساله موجود دارید؟",
+            proposedReply: "مصرف این دارو در اطفال زیر ۲ سال نیازمند ارزیابی داروساز است.",
+            confidenceScore: 0.94,
+            riskLevel: "caution",
+            deterministicRuleApplied: "PEDIATRIC_DOSE_GUARD",
+          },
+          pipeline_traces: medTraceSteps,
+        },
+      });
+
+      assert.equal(medIngestRes.status, 200);
+      assert.equal(medIngestRes.body.success, true);
+      assert.ok(medIngestRes.body.id);
+
+      // Wait for SSE propagation
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Verify SSE received shadow-update event with trace from bale-med
+      const medEvent = sseEvents.find(
+        (e) => e.event === "shadow-update" && e.data.record?.id === medIngestRes.body.id
+      );
+      assert.ok(medEvent, "SSE stream must receive shadow-update for bale-med ingest");
+      assert.equal(medEvent.data.record.channel, "bale");
+      assert.equal(medEvent.data.record.riskLevel, "caution");
+      assert.ok(Array.isArray(medEvent.data.trace), "SSE event must contain pipeline execution trace steps");
+      assert.equal(medEvent.data.trace.length, 4);
+      assert.equal(medEvent.data.trace[0].stage, "GATEWAY_INGEST");
+      assert.equal(medEvent.data.trace[1].stage, "CLINICAL_CLASSIFICATION");
+
+      // 24.2 Ingest telemetry from bale-auto conversational ledger engine
+      const autoTraceSteps = [
+        { stage: "GATEWAY_INGEST", title: "Bale Auto conversational message", status: "passed", detail: "Received and normalized", durationMs: 8 },
+        { stage: "LLM_INFERENCE", title: "Intent classification", status: "passed", detail: "Parsed as payment_received", durationMs: 18 },
+        { stage: "DETERMINISTIC_RULES", title: "Financial & Ledger Validation", status: "passed", detail: "Scope: auto_parts, Action: deposit", durationMs: 5 },
+        { stage: "TRANSACTION_PERSISTENCE", title: "Shadow Queue Ledger Sync", status: "passed", detail: "Draft ID: auto-88", durationMs: 7 },
+      ];
+
+      const autoIngestRes = await request(testServer, {
+        method: "POST",
+        path: "/api/pipeline/ingest/shadow-trace",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+        body: {
+          engine_id: "bale-auto",
+          shadow_item: {
+            id: `bauto-live-${Date.now()}`,
+            sessionId: "bale-ledger-112233",
+            channel: "bale",
+            senderDisplay: "فروشگاه لوازم یدکی رضایی",
+            userMessage: "واریز مبلغ ۵۰۰,۰۰۰ تومان بابت فاکتور شماره ۱۲۴ انجام شد.",
+            proposedReply: "سند واریز با موفقیت ثبت شد و در انتظار تایید حسابدار است.",
+            confidenceScore: 0.98,
+            riskLevel: "safe",
+            deterministicRuleApplied: "LEDGER_BALANCE_CALCULATION",
+          },
+          pipeline_traces: autoTraceSteps,
+        },
+      });
+
+      assert.equal(autoIngestRes.status, 200);
+      assert.equal(autoIngestRes.body.success, true);
+      assert.ok(autoIngestRes.body.id);
+
+      // Wait for SSE propagation
+      await new Promise((r) => setTimeout(r, 100));
+
+      const autoEvent = sseEvents.find(
+        (e) => e.event === "shadow-update" && e.data.record?.id === autoIngestRes.body.id
+      );
+      assert.ok(autoEvent, "SSE stream must receive shadow-update for bale-auto ingest");
+      assert.equal(autoEvent.data.record.channel, "bale");
+      assert.ok(Array.isArray(autoEvent.data.trace));
+      assert.equal(autoEvent.data.trace[1].stage, "LLM_INFERENCE");
+
+      // 24.3 Verify GET /api/pipeline/state returns the latest execution trace & record
+      const stateRes = await request(testServer, {
+        method: "GET",
+        path: "/api/pipeline/state",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+      });
+      assert.equal(stateRes.status, 200);
+      assert.ok(stateRes.body.latestPipelineTrace, "State must contain latestPipelineTrace");
+      assert.equal(stateRes.body.latestPipelineTrace.length, 4);
+      assert.equal(stateRes.body.latestPipelineRecord?.id, autoIngestRes.body.id);
+    } finally {
+      sseReq.destroy();
+    }
+  });
 });

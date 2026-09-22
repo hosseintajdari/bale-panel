@@ -16,6 +16,8 @@ interface PipelineState {
   addToQueue: (record: ShadowReviewItem) => void;
   /** SSE: partially update an existing record by id */
   updateQueueItem: (id: string, patch: Partial<ShadowReviewItem>) => void;
+  setLatestPipelineTrace: (trace: PipelineTraceStep[] | null) => void;
+  setLatestPipelineRecord: (record: ShadowReviewItem | null) => void;
 
   processMessage: (channel: ChannelPlatform, senderDisplay: string, text: string) => Promise<void>;
   handleShadowAction: (id: string, action: 'approve' | 'reject' | 'modify', editedReply?: string) => Promise<void>;
@@ -32,6 +34,8 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   setEnvironmentMode: (mode) => set({ environmentMode: mode }),
   setActiveSessionId: (id) => set({ activeSessionId: id }),
   setShadowQueue: (queue) => set({ shadowQueue: queue }),
+  setLatestPipelineTrace: (trace) => set({ latestPipelineTrace: trace }),
+  setLatestPipelineRecord: (record) => set({ latestPipelineRecord: record }),
 
   addToQueue: (record) =>
     set((state) => ({ shadowQueue: [record, ...state.shadowQueue] })),
@@ -100,6 +104,12 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       const data = await res.json();
       if (data.shadowQueue) {
         set({ shadowQueue: data.shadowQueue });
+      }
+      if (data.latestPipelineTrace) {
+        set({ latestPipelineTrace: data.latestPipelineTrace });
+      }
+      if (data.latestPipelineRecord) {
+        set({ latestPipelineRecord: data.latestPipelineRecord });
       }
     } catch (err) {
       console.debug('Pipeline initial state fetch error:', err);

@@ -12,6 +12,8 @@ import { usePipelineStore } from '../store/usePipelineStore';
 export function useShadowStream() {
   const addToQueue = usePipelineStore((s) => s.addToQueue);
   const updateQueueItem = usePipelineStore((s) => s.updateQueueItem);
+  const setLatestPipelineRecord = usePipelineStore((s) => s.setLatestPipelineRecord);
+  const setLatestPipelineTrace = usePipelineStore((s) => s.setLatestPipelineTrace);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -25,6 +27,10 @@ export function useShadowStream() {
         const payload = JSON.parse(e.data);
         if (payload.type === 'new' && payload.record) {
           addToQueue(payload.record);
+          setLatestPipelineRecord(payload.record);
+          if (payload.trace && Array.isArray(payload.trace)) {
+            setLatestPipelineTrace(payload.trace);
+          }
         } else if (payload.type === 'action' && payload.id) {
           updateQueueItem(payload.id, { status: payload.status });
         }
@@ -46,5 +52,5 @@ export function useShadowStream() {
       es.close();
       esRef.current = null;
     };
-  }, [addToQueue, updateQueueItem]);
+  }, [addToQueue, updateQueueItem, setLatestPipelineRecord, setLatestPipelineTrace]);
 }

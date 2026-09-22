@@ -147,7 +147,11 @@ evolutionRouter.post("/api/evolution/inbound-message", async (req, res) => {
     evolutionInstanceState.antiBan.messagesSentToday += 1;
 
     // Broadcast newly created shadow record to real-time SSE stream clients
-    shadowEventBus.emit("shadow-update", { type: "new", record: pipelineResult.record });
+    shadowEventBus.emit("shadow-update", {
+      type: "new",
+      record: pipelineResult.record,
+      trace: pipelineResult.trace,
+    });
 
     res.json({
       success: true,

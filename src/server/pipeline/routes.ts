@@ -8,7 +8,13 @@ import { dispatchToOutbox } from "../outbox/index.js";
 import { requireOperatorAuth } from "../auth/index.js";
 import { processPipelineMessage } from "./engine.js";
 
+import { PipelineTraceStep } from "./types.js";
+
 export const pipelineRouter = Router();
+
+// In-memory cache of latest live pipeline execution trace & record for initial page load / inspector
+let latestPipelineTrace: PipelineTraceStep[] | null = null;
+let latestPipelineRecord: ShadowRecord | null = null;
 
 // ---------------------------------------------------------------------------
 // SSE Event Bus — in-process pub/sub for real-time shadow queue updates
@@ -33,6 +39,8 @@ pipelineRouter.get("/api/pipeline/state", (req: Request, res: Response) => {
     pulseConfig: gatewayPulseConfig,
     channels: getChannelsWithTelemetry(),
     shadowQueue: queue,
+    latestPipelineTrace,
+    latestPipelineRecord,
     stats: {
       totalProcessed,
       shadowIntercepted: queue.length,
@@ -99,7 +107,7 @@ pipelineRouter.get("/api/health", (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (req: Request, res: Response) => {
   try {
-    const { engine_id, shadow_item } = req.body || {};
+    const { engine_id, shadow_item, pipeline_traces } = req.body || {};
     if (!engine_id || typeof engine_id !== "string" || !shadow_item || typeof shadow_item !== "object") {
       return res.status(400).json({ error: "Missing or invalid required fields: engine_id and shadow_item" });
     }
@@ -125,8 +133,18 @@ pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (r
 
     shadowDB.insert(record);
 
-    // Broadcast to all connected SSE clients
-    shadowEventBus.emit("shadow-update", { type: "new", record });
+    // Update in-memory live execution trace and record
+    if (Array.isArray(pipeline_traces) && pipeline_traces.length > 0) {
+      latestPipelineTrace = pipeline_traces;
+    }
+    latestPipelineRecord = record;
+
+    // Broadcast to all connected SSE clients including live trace
+    shadowEventBus.emit("shadow-update", {
+      type: "new",
+      record,
+      trace: Array.isArray(pipeline_traces) ? pipeline_traces : null,
+    });
 
     res.json({ success: true, message: "Shadow record ingested.", id: record.id });
   } catch (err: any) {
@@ -155,8 +173,16 @@ pipelineRouter.post("/api/pipeline/process", async (req: Request, res: Response)
 
     const result = await processPipelineMessage(channel, senderId, senderDisplay, text, domainContext, environmentMode);
 
-    // Broadcast the newly created record to SSE clients
-    shadowEventBus.emit("shadow-update", { type: "new", record: result.record });
+    // Update in-memory live execution trace and record
+    latestPipelineTrace = result.trace;
+    latestPipelineRecord = result.record;
+
+    // Broadcast the newly created record to SSE clients including live trace
+    shadowEventBus.emit("shadow-update", {
+      type: "new",
+      record: result.record,
+      trace: result.trace,
+    });
 
     res.json({
       success: true,

@@ -29,7 +29,11 @@ webhookRouter.post("/webhook/evolution", async (req, res) => {
 
     // Dispatch internally to pipeline process
     const pipelineResult = await processPipelineMessage("whatsapp", senderId, senderDisplay, text, "WhatsApp User", "live");
-    shadowEventBus.emit("shadow-update", { type: "new", record: pipelineResult.record });
+    shadowEventBus.emit("shadow-update", {
+      type: "new",
+      record: pipelineResult.record,
+      trace: pipelineResult.trace,
+    });
   } catch (error) {
     console.error("Evolution API Webhook Error:", error);
   }
@@ -90,7 +94,11 @@ webhookRouter.post("/webhook/bale", async (req, res) => {
 
     // Run through pipeline
     const pipelineResult = await processPipelineMessage("bale", chatId, senderName, text, domainContext, "shadow");
-    shadowEventBus.emit("shadow-update", { type: "new", record: pipelineResult.record });
+    shadowEventBus.emit("shadow-update", {
+      type: "new",
+      record: pipelineResult.record,
+      trace: pipelineResult.trace,
+    });
   } catch (err) {
     console.error("[BALE WEBHOOK ERROR]:", err);
   }
