@@ -44,6 +44,12 @@ Fill in the required values inside `.env`:
 
 *(Tip: Generate strong keys with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)*
 
+### Evolution webhook authentication
+
+Before exposing `POST /webhook/evolution`, set `EVOLUTION_WEBHOOK_SECRET` to a random value and configure Evolution to send the same value in the `x-evolution-webhook-secret` HTTP header. Requests with a missing, invalid, or unconfigured secret are rejected with `403`; the pipeline never processes them. Do not reuse `EVOLUTION_API_KEY` for this purpose.
+
+If the deployed Evolution version cannot add a static callback header or generate a documented signature, keep this endpoint private behind a mutually authenticated reverse proxy or equivalent network control.
+
 ### 3. Install & Run
 ```bash
 npm install

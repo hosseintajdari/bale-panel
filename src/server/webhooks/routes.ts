@@ -1,14 +1,29 @@
 import { Router } from "express";
 import { auditDB } from "../../lib/db/database.js";
 import { secureEquals } from "../auth/index.js";
-import { BALE_BOT_TOKEN, BALE_WEBHOOK_SECRET } from "../config.js";
+import { BALE_BOT_TOKEN, BALE_WEBHOOK_SECRET, EVOLUTION_WEBHOOK_SECRET } from "../config.js";
 import { processPipelineMessage, shadowEventBus } from "../pipeline/index.js";
 
 export const webhookRouter = Router();
 
 // Evolution API v2 Real Webhook Endpoint (For WhatsApp)
 webhookRouter.post("/webhook/evolution", async (req, res) => {
-  // Acknowledge webhook quickly to avoid timeout
+  // Evolution webhooks must include the custom header configured on the instance.
+  // Fail closed so an unset deployment secret cannot expose the ingestion pipeline.
+  if (!EVOLUTION_WEBHOOK_SECRET) {
+    console.error("[EVOLUTION WEBHOOK] EVOLUTION_WEBHOOK_SECRET is not configured; request rejected.");
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const incomingSecret = typeof req.headers["x-evolution-webhook-secret"] === "string"
+    ? req.headers["x-evolution-webhook-secret"]
+    : "";
+  if (!secureEquals(incomingSecret, EVOLUTION_WEBHOOK_SECRET)) {
+    console.warn("[EVOLUTION WEBHOOK] Secret token mismatch — request rejected.");
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  // Acknowledge webhook quickly to avoid timeout, after authenticating it.
   res.status(200).json({ status: "received" });
 
   try {

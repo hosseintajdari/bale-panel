@@ -8,7 +8,7 @@ import { authenticateToken, secureEquals, hashToken, createOperatorSession, sess
 import { shadowDB, auditDB, apiKeyDB, telegramKeyboardDB, telegramWebAppDB } from "../src/lib/db/database.js";
 import { dispatchToOutbox } from "../src/server/outbox/index.js";
 import { processPipelineMessage } from "../src/server/pipeline/index.js";
-import { PANEL_API_SECRET, BALE_WEBHOOK_SECRET } from "../src/server/config.js";
+import { PANEL_API_SECRET, BALE_WEBHOOK_SECRET, EVOLUTION_WEBHOOK_SECRET } from "../src/server/config.js";
 
 // Ensure mock outbox dispatcher is active during automated test runs
 process.env.MOCK_OUTBOX = "true";
@@ -469,25 +469,38 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(baleOk.status, 200);
     assert.equal(baleOk.body.ok, true);
 
-    // 9.3 Evolution Webhook -> 200 OK
-    const waOk = await request(testServer, {
+    // 9.3 Evolution Webhook rejects unauthenticated traffic (or a missing server secret).
+    const evolutionPayload = {
+      event: "messages.upsert",
+      data: {
+        messages: [
+          {
+            key: { remoteJid: "989120000000@s.whatsapp.net", fromMe: false },
+            pushName: "Hossein",
+            message: { conversation: "سلام نسخه من آماده است؟" },
+          },
+        ],
+      },
+    };
+    const waWrongSecret = await request(testServer, {
       method: "POST",
       path: "/webhook/evolution",
-      body: {
-        event: "messages.upsert",
-        data: {
-          messages: [
-            {
-              key: { remoteJid: "989120000000@s.whatsapp.net", fromMe: false },
-              pushName: "Hossein",
-              message: { conversation: "سلام نسخه من آماده است؟" },
-            },
-          ],
-        },
-      },
+      headers: { "x-evolution-webhook-secret": "wrong_secret" },
+      body: evolutionPayload,
     });
-    assert.equal(waOk.status, 200);
-    assert.equal(waOk.body.status, "received");
+    assert.equal(waWrongSecret.status, 403);
+
+    // A configured Evolution secret allows the webhook through.
+    if (EVOLUTION_WEBHOOK_SECRET) {
+      const waOk = await request(testServer, {
+        method: "POST",
+        path: "/webhook/evolution",
+        headers: { "x-evolution-webhook-secret": EVOLUTION_WEBHOOK_SECRET },
+        body: evolutionPayload,
+      });
+      assert.equal(waOk.status, 200);
+      assert.equal(waOk.body.status, "received");
+    }
 
     // 9.4 Bale Webhook Empty Body Resilience -> 200 OK
     const baleEmptyRes = await request(testServer, {
@@ -499,14 +512,13 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(baleEmptyRes.status, 200);
     assert.equal(baleEmptyRes.body.ok, true);
 
-    // 9.5 Evolution Webhook Empty Body Resilience -> 200 OK
+    // 9.5 Evolution Webhook rejects an empty request without its secret.
     const waEmptyRes = await request(testServer, {
       method: "POST",
       path: "/webhook/evolution",
       body: {},
     });
-    assert.equal(waEmptyRes.status, 200);
-    assert.equal(waEmptyRes.body.status, "received");
+    assert.equal(waEmptyRes.status, 403);
   });
 
   await t.test("10. HTTP Endpoints: Gateways Telemetry & Audit History", async () => {
@@ -1081,14 +1093,13 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(secureEquals(undefined as any, "token"), false);
     assert.equal(secureEquals(12345 as any, "token"), false);
 
-    // 19.2 POST /webhook/evolution with empty body does not crash
+    // 19.2 Evolution rejects an unsigned empty request before processing it.
     const evoEmptyRes = await request(testServer, {
       method: "POST",
       path: "/webhook/evolution",
       body: {},
     });
-    assert.equal(evoEmptyRes.status, 200);
-    assert.equal(evoEmptyRes.body.status, "received");
+    assert.equal(evoEmptyRes.status, 403);
 
     // 19.3 POST /api/pipeline/process without text returns 400 Bad Request (not 500)
     const pipeEmptyBodyRes = await request(testServer, {
