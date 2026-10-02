@@ -3,8 +3,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "embednet.db");
+const configuredDbPath = process.env.EMBEDNET_DB_PATH?.trim();
+const DB_PATH = configuredDbPath
+  ? path.resolve(process.cwd(), configuredDbPath)
+  : path.join(process.cwd(), "data", "embednet.db");
+const DATA_DIR = path.dirname(DB_PATH);
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });

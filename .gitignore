@@ -5,6 +5,7 @@ node_modules/
 
 # Testing and Coverage
 /coverage
+/.tmp
 
 # Production and Builds
 /dist
