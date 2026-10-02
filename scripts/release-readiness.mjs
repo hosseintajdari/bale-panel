@@ -46,15 +46,16 @@ const checks = [
   run("build", "npm", ["run", "build"]),
 ];
 const secretScan = findTrackedSecretRisks();
+const configured = (name) => typeof process.env[name] === "string" && process.env[name].trim().length > 0;
 const environment = {
-  panelApiSecretConfigured: Boolean(process.env.PANEL_API_SECRET),
-  vaultMasterKeyConfigured: Boolean(process.env.VAULT_MASTER_KEY),
-  baleBotTokenConfigured: Boolean(process.env.BALE_BOT_TOKEN),
-  baleWebhookSecretConfigured: Boolean(process.env.BALE_WEBHOOK_SECRET),
-  evolutionUrlConfigured: Boolean(process.env.EVOLUTION_API_URL),
-  evolutionApiKeyConfigured: Boolean(process.env.EVOLUTION_API_KEY),
-  evolutionInstanceConfigured: Boolean(process.env.EVOLUTION_INSTANCE),
-  evolutionWebhookSecretConfigured: Boolean(process.env.EVOLUTION_WEBHOOK_SECRET),
+  panelApiSecretConfigured: configured("PANEL_API_SECRET"),
+  vaultMasterKeyConfigured: configured("VAULT_MASTER_KEY"),
+  baleBotTokenConfigured: configured("BALE_BOT_TOKEN"),
+  baleWebhookSecretConfigured: configured("BALE_WEBHOOK_SECRET"),
+  evolutionUrlConfigured: configured("EVOLUTION_API_URL"),
+  evolutionApiKeyConfigured: configured("EVOLUTION_API_KEY"),
+  evolutionInstanceConfigured: configured("EVOLUTION_INSTANCE"),
+  evolutionWebhookSecretConfigured: configured("EVOLUTION_WEBHOOK_SECRET"),
 };
 const runtimeEvidenceVerified = process.env.RELEASE_RUNTIME_EVIDENCE === "verified";
 const runtimeBlockers = [];
@@ -64,19 +65,25 @@ for (const [name, configured] of Object.entries(environment)) {
 if (!runtimeEvidenceVerified) runtimeBlockers.push("live gateway/webhook verification evidence is not marked verified");
 
 const head = git("rev-parse", "HEAD");
+const workingTreeClean = git("status", "--porcelain") === "";
 let rollbackCommit = null;
+let rollbackCommand = null;
 try {
-  rollbackCommit = git("rev-parse", "HEAD^");
+  const parents = git("rev-list", "--parents", "-n", "1", head).split(" ").slice(1);
+  rollbackCommit = parents[0] ?? null;
+  rollbackCommand = parents.length > 1
+    ? `git revert --no-edit -m 1 ${head}`
+    : `git revert --no-edit ${head}`;
 } catch {
   // A shallow clone may not contain a parent commit. Report it as unavailable, not a script crash.
 }
 const codeReady = checks.every((check) => check.passed) && secretScan.passed;
-const releaseReady = codeReady && runtimeBlockers.length === 0;
+const releaseReady = codeReady && runtimeBlockers.length === 0 && workingTreeClean;
 const report = {
   generatedAt: new Date().toISOString(),
   mode,
   status: releaseReady ? "READY" : codeReady ? "RUNTIME_EVIDENCE_REQUIRED" : "BLOCKED",
-  git: { branch: git("branch", "--show-current"), head, clean: git("status", "--porcelain") === "" },
+  git: { branch: git("branch", "--show-current"), head, clean: workingTreeClean },
   checks,
   secretScan,
   webhookPolicy: {
@@ -85,9 +92,9 @@ const report = {
   },
   environment,
   runtimeEvidenceVerified,
-  blockers: [...(codeReady ? [] : ["one or more code-quality gates failed or a tracked-secret risk was found"]), ...runtimeBlockers],
+  blockers: [...(codeReady ? [] : ["one or more code-quality gates failed or a tracked-secret risk was found"]), ...(workingTreeClean ? [] : ["working tree is not clean; release evidence must be tied to committed content"]), ...runtimeBlockers],
   rollback: rollbackCommit
-    ? { targetCommit: rollbackCommit, command: `git revert --no-edit ${head}` }
+    ? { targetCommit: rollbackCommit, command: rollbackCommand }
     : { targetCommit: null, command: null, note: "Parent commit is unavailable in this clone; fetch history before rollback." },
   codeReady,
   releaseReady,
