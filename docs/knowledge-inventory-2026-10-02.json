@@ -1,0 +1,190 @@
+{
+  "generated_at": "2026-10-02",
+  "repository": "https://github.com/hosseintajdari/bale-panel",
+  "head": "https://github.com/hosseintajdari/bale-panel/commit/23cc534",
+  "branch": "main",
+  "issue": "https://github.com/hosseintajdari/bale-panel/issues/19",
+  "source_policy": {
+    "code_and_github": "technical source of truth",
+    "notion": "read-only decision/knowledge context; no writes performed"
+  },
+  "architecture": {
+    "runtime": "React 19 + TypeScript + Vite frontend; Node.js + Express + tsx backend",
+    "bootstrap": "server.ts mounts auth, vault, pipeline, gateways, evolution, ledger, admin, bot and webhook routers; Vite middleware in dev and static dist in production; binds 127.0.0.1",
+    "domains": [
+      "auth",
+      "admin",
+      "bot",
+      "config",
+      "evolution",
+      "gateways",
+      "ledger",
+      "pipeline",
+      "rules",
+      "vault",
+      "webhooks",
+      "outbox"
+    ],
+    "flow": "channel webhook -> normalization -> deterministic rules -> Gemini/fallback -> privacy/ledger -> shadow queue/HITL -> outbox when approved",
+    "persistence": "SQLite-backed domain stores and audit/ledger/shadow state; isolated test SQLite under .tmp/"
+  },
+  "technical_decisions": [
+    {
+      "decision": "modular backend split",
+      "evidence": "docs/HANDOFF_BACKEND_MODULARIZATION.md; server.ts; commit 23cc534"
+    },
+    {
+      "decision": "deterministic rules before/alongside probabilistic LLM",
+      "evidence": "README.md; src/server/pipeline/engine.ts; src/server/rules/"
+    },
+    {
+      "decision": "shadow/HITL for risky or non-personal traffic",
+      "evidence": "AGENTS.md; docs/api-contract.md; pipeline engine"
+    },
+    {
+      "decision": "RBAC roles admin/operator/auditor",
+      "evidence": "src/server/auth/middleware.ts; server.ts"
+    },
+    {
+      "decision": "release gate separates code evidence from runtime evidence",
+      "evidence": "docs/RELEASE_READINESS.md; PR #18; commit 6b0a3a4"
+    },
+    {
+      "decision": "formal ADR files not found in docs/",
+      "evidence": "tracked docs inventory; decisions are in handoffs/AGENTS.md"
+    }
+  ],
+  "api_and_webhooks": {
+    "public_or_base": [
+      "GET /api/health",
+      "POST /webhook/bale",
+      "POST /webhook/evolution"
+    ],
+    "auth_contract": "/api/admin requires admin; /api/pipeline and /api/evolution and /api/ledger require operator; /api/gateways requires auditor; bearer or HttpOnly session cookie",
+    "pipeline": [
+      "GET /api/pipeline/state",
+      "GET /api/pipeline/stream",
+      "POST /api/pipeline/ingest/shadow-trace",
+      "POST /api/pipeline/process",
+      "POST /api/pipeline/shadow/action"
+    ],
+    "other": "auth, vault/admin credentials, gateways, ledger, bot, evolution and admin routes are enumerated in src/server/*/routes.ts",
+    "webhook_security": "Evolution fails closed with x-evolution-webhook-secret and constant-time comparison; Bale validates x-telegram-bot-api-secret-token when configured."
+  },
+  "security_contracts": [
+    "No credentials in git; .env.example only.",
+    "AES-256-GCM vault encryption with VAULT_MASTER_KEY.",
+    "Admin master credential is not returned to API/frontend.",
+    "Webhook authentication before processing.",
+    "Privacy modes scrub/avoid persistence for personal or ephemeral high-privacy contexts.",
+    "Do not put secrets, raw user messages, patient data or private network details in Issue/PR/logs."
+  ],
+  "testing_and_release": {
+    "npm_test": "PASS: 25 tests, 0 failed",
+    "npm_run_lint": "PASS",
+    "npm_run_build": "PASS",
+    "npm_run_control_check": "PASS",
+    "npm_run_release_readiness": "PASS as code gate; reports RUNTIME_EVIDENCE_REQUIRED, not deployment readiness",
+    "runtime": "not verified by this inventory"
+  },
+  "github_history": [
+    {
+      "item": "Issue #12",
+      "summary": "Evolution webhook authentication"
+    },
+    {
+      "item": "Issue #15 / PR #16",
+      "summary": "project-control validation"
+    },
+    {
+      "item": "Issue #17 / PR #18",
+      "summary": "release-readiness evidence gate"
+    },
+    {
+      "item": "Issues #13 and #14",
+      "summary": "open retry-state and duplicate-card follow-ups"
+    },
+    {
+      "item": "Issue #19",
+      "summary": "this knowledge inventory"
+    }
+  ],
+  "notion_read_only": [
+    {
+      "title": "کنسول پیام‌رسان (Bale-Panel)",
+      "url": "https://app.notion.com/p/3d4834f066298182a6f7d5b36fd40a02",
+      "finding": "project page; last edited 2026-09-30; links Issue #1 and older synchronization context"
+    },
+    {
+      "title": "نقشه سیستم",
+      "url": "https://app.notion.com/p/692db7b0e2084a349c0a85241ecc9d43",
+      "finding": "defines GitHub as code/evidence boundary and Notion as decisions/knowledge"
+    },
+    {
+      "title": "گزارش انتشارها",
+      "url": "https://app.notion.com/p/78e834f0662983259a25811c94437cdf",
+      "finding": "release log; older 2026-09-22 sync and no current Bale-Panel runtime claim"
+    },
+    {
+      "title": "خط لوله وب‌هوک بله",
+      "url": "https://app.notion.com/p/2e2834f06629823b9f63010dcd7d85e3",
+      "finding": "FastAPI /opt/bale-bot architecture, not this Express bale-panel endpoint"
+    }
+  ],
+  "differences": [
+    {
+      "type": "stale",
+      "notion": "project points to active Issue #1 and older sync/issues #1/#6",
+      "code": "HEAD 23cc534 includes later Issues/PRs #15/#17 and PRs #16/#18",
+      "action": "update Notion project links/status after approval"
+    },
+    {
+      "type": "scope mismatch",
+      "notion": "Bale webhook page says FastAPI /opt/bale-bot and URL secret path",
+      "code": "this repo uses Express POST /webhook/bale with header secret; Evolution uses a different header",
+      "action": "mark page as external/legacy or link it explicitly to bale-auto; do not merge contracts"
+    },
+    {
+      "type": "unsupported claim",
+      "notion": "project highlight mentions circuit breakers and signature validation broadly",
+      "code": "inventory confirms constant-time webhook secrets and rules, but no generic circuit-breaker module was found",
+      "action": "downgrade to planned/unverified unless code evidence is added"
+    },
+    {
+      "type": "release freshness",
+      "notion": "release log does not contain current commit 23cc534 / readiness result",
+      "code": "current release gate is code-pass but runtime evidence missing",
+      "action": "append evidence only after connector approval"
+    }
+  ],
+  "new_knowledge": [
+    "Current technical baseline is commit 23cc534.",
+    "Release readiness is code-green but runtime-unverified.",
+    "Issue #19 is the tracking record.",
+    "Bale-panel webhook contract must remain distinct from FastAPI bale-auto Notion page."
+  ],
+  "obsolete_or_needs_review": [
+    "Notion link to Issue #1 as the active issue for current state.",
+    "Notion sync date 2026-09-22 as the latest technical baseline.",
+    "Unqualified circuit-breaker claim for this repository.",
+    "Any interpretation of the FastAPI Bale webhook page as this Express implementation."
+  ],
+  "links": {
+    "project": "https://app.notion.com/p/3d4834f066298182a6f7d5b36fd40a02",
+    "issue": "https://github.com/hosseintajdari/bale-panel/issues/19",
+    "pr16": "https://github.com/hosseintajdari/bale-panel/pull/16",
+    "pr18": "https://github.com/hosseintajdari/bale-panel/pull/18",
+    "commit": "https://github.com/hosseintajdari/bale-panel/commit/23cc534",
+    "release_doc": "https://github.com/hosseintajdari/bale-panel/blob/23cc534/docs/RELEASE_READINESS.md",
+    "api_doc": "https://github.com/hosseintajdari/bale-panel/blob/23cc534/docs/api-contract.md"
+  },
+  "notion_write_status": {
+    "approved": true,
+    "updated_pages": [
+      "https://app.notion.com/p/3d4834f066298182a6f7d5b36fd40a02",
+      "https://app.notion.com/p/2e2834f06629823b9f63010dcd7d85e3",
+      "https://app.notion.com/p/78e834f0662983259a25811c94437cdf"
+    ],
+    "verified_readback": true
+  }
+}
