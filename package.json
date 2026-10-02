@@ -11,7 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --import ./tests/test-env.ts --test tests/modular_backend.test.ts",
-    "control:check": "node scripts/project-control.mjs"
+    "control:check": "node scripts/project-control.mjs",
+    "release:readiness": "node scripts/release-readiness.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
