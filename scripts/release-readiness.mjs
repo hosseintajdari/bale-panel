@@ -64,7 +64,12 @@ for (const [name, configured] of Object.entries(environment)) {
 if (!runtimeEvidenceVerified) runtimeBlockers.push("live gateway/webhook verification evidence is not marked verified");
 
 const head = git("rev-parse", "HEAD");
-const rollbackCommit = git("rev-parse", "HEAD^");
+let rollbackCommit = null;
+try {
+  rollbackCommit = git("rev-parse", "HEAD^");
+} catch {
+  // A shallow clone may not contain a parent commit. Report it as unavailable, not a script crash.
+}
 const codeReady = checks.every((check) => check.passed) && secretScan.passed;
 const releaseReady = codeReady && runtimeBlockers.length === 0;
 const report = {
@@ -81,7 +86,9 @@ const report = {
   environment,
   runtimeEvidenceVerified,
   blockers: [...(codeReady ? [] : ["one or more code-quality gates failed or a tracked-secret risk was found"]), ...runtimeBlockers],
-  rollback: { targetCommit: rollbackCommit, command: `git revert --no-edit ${head}` },
+  rollback: rollbackCommit
+    ? { targetCommit: rollbackCommit, command: `git revert --no-edit ${head}` }
+    : { targetCommit: null, command: null, note: "Parent commit is unavailable in this clone; fetch history before rollback." },
   codeReady,
   releaseReady,
   notionDraft: {
@@ -111,8 +118,8 @@ const markdown = [
   ...(report.blockers.length ? report.blockers.map((blocker) => `- ${blocker}`) : ["- none"]),
   "",
   "## Rollback",
-  `- Target: ${rollbackCommit}`,
-  `- Command: \`${report.rollback.command}\``,
+  `- Target: ${report.rollback.targetCommit ?? "unavailable in this clone"}`,
+  `- Command: ${report.rollback.command ? `\`${report.rollback.command}\`` : "fetch history before preparing rollback"}`,
   "",
   "## Notion handoff",
   `- ${report.notionDraft.status}`,
