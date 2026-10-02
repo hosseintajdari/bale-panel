@@ -26,7 +26,7 @@ Code and GitHub are the technical source of truth. The current code baseline is 
 ## API and webhook inventory
 - Health: `GET /api/health`.
 - Shadow contract: `POST /api/pipeline/ingest/shadow-trace`, `GET /api/pipeline/stream`, process/action/state routes.
-- Bale: `POST /webhook/bale`; optional `x-telegram-bot-api-secret-token`.
+- Bale: `POST /webhook/bale`; requires `x-telegram-bot-api-secret-token` and fails closed when the secret is absent or mismatched.
 - Evolution: `POST /webhook/evolution`; required `x-evolution-webhook-secret`, fail-closed.
 - Other route groups: auth, admin, vault, gateways, ledger, bot, evolution. See `src/server/*/routes.ts`.
 
@@ -34,8 +34,8 @@ Code and GitHub are the technical source of truth. The current code baseline is 
 - No credentials in git.
 - AES-256-GCM vault using `VAULT_MASTER_KEY`.
 - Admin routes require authenticated session or bearer credential; master credential is not returned.
-- Webhooks authenticate before processing and use constant-time secret comparison.
-- Personal/ephemeral high-privacy flows avoid raw persistence or scrub sensitive content.
+- Webhooks authenticate before processing and use constant-time secret comparison. Bale rejects requests when its secret is absent or mismatched.
+- Personal/ephemeral high-privacy flows omit message content from inbound audit records; operational metadata may still be retained.
 - Do not place secrets, raw messages, patient data, or private network details in GitHub evidence.
 
 ## Tests and release
@@ -52,8 +52,8 @@ Code and GitHub are the technical source of truth. The current code baseline is 
 - [Issues #13](https://github.com/hosseintajdari/bale-panel/issues/13) and [#14](https://github.com/hosseintajdari/bale-panel/issues/14) remain open follow-ups.
 - This inventory: [Issue #19](https://github.com/hosseintajdari/bale-panel/issues/19).
 
-## Notion comparison (read-only)
-Read pages: [Bale-Panel project](https://app.notion.com/p/3d4834f066298182a6f7d5b36fd40a02), [system map](https://app.notion.com/p/692db7b0e2084a3494c0a85241ecc9d43), [release log](https://app.notion.com/p/78e834f0662983259a25811c94437cdf), [Bale webhook knowledge](https://app.notion.com/p/2e2834f06629823b9f63010dcd7d85e3).
+## Notion comparison
+Read and updated pages: [Bale-Panel project](https://app.notion.com/p/3d4834f066298182a6f7d5b36fd40a02), [system map](https://app.notion.com/p/692db7b0e2084a3494c0a85241ecc9d43), [release log](https://app.notion.com/p/78e834f0662983259a25811c94437cdf), [Bale webhook knowledge](https://app.notion.com/p/2e2834f06629823b9f63010dcd7d85e3).
 
 Differences found:
 1. Project page still points to Issue #1 and a 2026-09-22 synchronization context; current evidence is #15/#17, PR #16/#18, and `23cc534`.
