@@ -46,15 +46,16 @@ const checks = [
   run("build", "npm", ["run", "build"]),
 ];
 const secretScan = findTrackedSecretRisks();
+const configured = (name) => typeof process.env[name] === "string" && process.env[name].trim().length > 0;
 const environment = {
-  panelApiSecretConfigured: Boolean(process.env.PANEL_API_SECRET),
-  vaultMasterKeyConfigured: Boolean(process.env.VAULT_MASTER_KEY),
-  baleBotTokenConfigured: Boolean(process.env.BALE_BOT_TOKEN),
-  baleWebhookSecretConfigured: Boolean(process.env.BALE_WEBHOOK_SECRET),
-  evolutionUrlConfigured: Boolean(process.env.EVOLUTION_API_URL),
-  evolutionApiKeyConfigured: Boolean(process.env.EVOLUTION_API_KEY),
-  evolutionInstanceConfigured: Boolean(process.env.EVOLUTION_INSTANCE),
-  evolutionWebhookSecretConfigured: Boolean(process.env.EVOLUTION_WEBHOOK_SECRET),
+  panelApiSecretConfigured: configured("PANEL_API_SECRET"),
+  vaultMasterKeyConfigured: configured("VAULT_MASTER_KEY"),
+  baleBotTokenConfigured: configured("BALE_BOT_TOKEN"),
+  baleWebhookSecretConfigured: configured("BALE_WEBHOOK_SECRET"),
+  evolutionUrlConfigured: configured("EVOLUTION_API_URL"),
+  evolutionApiKeyConfigured: configured("EVOLUTION_API_KEY"),
+  evolutionInstanceConfigured: configured("EVOLUTION_INSTANCE"),
+  evolutionWebhookSecretConfigured: configured("EVOLUTION_WEBHOOK_SECRET"),
 };
 const runtimeEvidenceVerified = process.env.RELEASE_RUNTIME_EVIDENCE === "verified";
 const runtimeBlockers = [];
@@ -81,7 +82,7 @@ const report = {
   secretScan,
   webhookPolicy: {
     evolution: "fail-closed when EVOLUTION_WEBHOOK_SECRET is absent or mismatched",
-    bale: "validates only when BALE_WEBHOOK_SECRET is configured; release requires that variable and live verification evidence",
+    bale: "fail-closed when BALE_WEBHOOK_SECRET is absent or mismatched; release requires that variable and live verification evidence",
   },
   environment,
   runtimeEvidenceVerified,
