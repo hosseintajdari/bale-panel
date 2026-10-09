@@ -2,6 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Send, LayoutGrid, Globe, Plus, Trash2, Save, LayoutTemplate, Link as LinkIcon, RefreshCw } from 'lucide-react';
 import { telegramApi } from '../utils/api';
 
+/** Only https: URLs become links; anything else renders as inert text (#66). */
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value) return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export const TelegramManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'keyboards' | 'webapps'>('keyboards');
   const [keyboards, setKeyboards] = useState<any[]>([]);
@@ -37,7 +47,7 @@ export const TelegramManager: React.FC = () => {
     try {
       const res = await telegramApi.saveKeyboard({ name: newKbName, schemaJson: defaultSchema });
       if (res.success) {
-        setKeyboards([res.keyboard, ...keyboards]);
+        setKeyboards((prev) => [res.keyboard, ...prev]);
         setNewKbName('');
       }
     } catch (err) {
@@ -49,7 +59,7 @@ export const TelegramManager: React.FC = () => {
     try {
       const res = await telegramApi.deleteKeyboard(id);
       if (res.success) {
-        setKeyboards(keyboards.filter(k => k.id !== id));
+        setKeyboards((prev) => prev.filter(k => k.id !== id));
       }
     } catch (err) {
       console.error(err);
@@ -61,7 +71,7 @@ export const TelegramManager: React.FC = () => {
     try {
       const res = await telegramApi.saveWebApp({ name: newWaName, url: newWaUrl });
       if (res.success) {
-        setWebapps([res.webapp, ...webapps]);
+        setWebapps((prev) => [res.webapp, ...prev]);
         setNewWaName('');
         setNewWaUrl('');
       }
@@ -74,7 +84,7 @@ export const TelegramManager: React.FC = () => {
     try {
       const res = await telegramApi.deleteWebApp(id);
       if (res.success) {
-        setWebapps(webapps.filter(w => w.id !== id));
+        setWebapps((prev) => prev.filter(w => w.id !== id));
       }
     } catch (err) {
       console.error(err);
@@ -247,9 +257,15 @@ export const TelegramManager: React.FC = () => {
                         <span className="text-sm font-medium text-zinc-100">{wa.name}</span>
                         <span className="text-[10px] font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">Active</span>
                       </div>
-                      <a href={wa.url} target="_blank" rel="noreferrer" className="text-xs font-mono text-zinc-400 hover:text-blue-400 transition-colors">
-                        {wa.url}
-                      </a>
+                      {isHttpsUrl(wa.url) ? (
+                        <a href={wa.url} target="_blank" rel="noreferrer" className="text-xs font-mono text-zinc-400 hover:text-blue-400 transition-colors">
+                          {wa.url}
+                        </a>
+                      ) : (
+                        <span className="text-xs font-mono text-zinc-500" title="Not rendered as a link: URL is not https">
+                          {wa.url}
+                        </span>
+                      )}
                     </div>
                     <button
                       onClick={() => handleDeleteWebApp(wa.id)}
