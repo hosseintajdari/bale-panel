@@ -13,6 +13,10 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+/** Canonical risk-level enum shared across layers (#86). */
+export const RISK_LEVELS = ["safe", "medium_risk", "high_redline"] as const;
+export type RiskLevel = (typeof RISK_LEVELS)[number];
+
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
@@ -27,7 +31,7 @@ db.exec(`
     proposed_reply TEXT NOT NULL,
     timestamp_iso TEXT NOT NULL,
     confidence_score REAL DEFAULT 0.9,
-    risk_level TEXT DEFAULT 'safe',
+    risk_level TEXT DEFAULT 'safe' CHECK (risk_level IN ('safe', 'medium_risk', 'high_redline')),
     status TEXT DEFAULT 'pending',
     deterministic_rule TEXT,
     audit_note TEXT,
@@ -102,6 +106,18 @@ db.exec(`
   );
 `);
 
+// Migration (#86): normalize risk_level values written before ingest validation
+// existed. Idempotent; invalid values fall back to the 'safe' default.
+const normalized = db
+  .prepare(
+    `UPDATE shadow_queue SET risk_level = 'safe'
+     WHERE risk_level NOT IN ('safe', 'medium_risk', 'high_redline')`
+  )
+  .run();
+if (normalized.changes > 0) {
+  console.log(`[DB] Normalized ${normalized.changes} shadow_queue row(s) with invalid risk_level to 'safe'.`);
+}
+
 export interface ShadowRecord {
   id: string;
   sessionId: string;
@@ -111,7 +127,7 @@ export interface ShadowRecord {
   proposedReply: string;
   timestamp: string;
   confidenceScore: number;
-  riskLevel: "safe" | "medium_risk" | "high_redline";
+  riskLevel: RiskLevel;
   status: "pending" | "approved" | "rejected" | "modified";
   deterministicRuleApplied?: string;
   auditNote?: string;
@@ -138,9 +154,9 @@ function rowToShadowRecord(row: any): ShadowRecord {
 
 const stmtInsertShadow = db.prepare(`
   INSERT INTO shadow_queue (id, session_id, channel, sender_display, user_message, proposed_reply,
-    timestamp_iso, confidence_score, risk_level, status, deterministic_rule, audit_note)
+    timestamp_iso, confidence_score, risk_level, status, deterministic_rule, audit_note, edited_reply)
   VALUES (@id, @sessionId, @channel, @senderDisplay, @userMessage, @proposedReply,
-    @timestamp, @confidenceScore, @riskLevel, @status, @deterministicRuleApplied, @auditNote)
+    @timestamp, @confidenceScore, @riskLevel, @status, @deterministicRuleApplied, @auditNote, @editedReply)
 `);
 
 const stmtGetAllShadow = db.prepare(`SELECT * FROM shadow_queue ORDER BY created_at DESC LIMIT 200`);
@@ -150,6 +166,9 @@ const stmtUpdateShadowStatus = db.prepare(`
 `);
 const stmtCountByChannelStatus = db.prepare(`
   SELECT COUNT(*) as count FROM shadow_queue WHERE channel = ? AND status = ?
+`);
+const stmtCountByStatus = db.prepare(`
+  SELECT status, COUNT(*) as count FROM shadow_queue GROUP BY status
 `);
 
 export const shadowDB = {
@@ -167,6 +186,7 @@ export const shadowDB = {
       status: record.status,
       deterministicRuleApplied: record.deterministicRuleApplied ?? null,
       auditNote: record.auditNote ?? null,
+      editedReply: record.editedReply ?? null,
     });
   },
   getAll(): ShadowRecord[] {
@@ -179,6 +199,13 @@ export const shadowDB = {
   updateStatus(id: string, status: ShadowRecord["status"], auditNote: string, editedReply?: string): ShadowRecord | null {
     stmtUpdateShadowStatus.run({ id, status, auditNote, editedReply: editedReply ?? null });
     return this.getById(id);
+  },
+  /** Full-table status aggregates — avoids the 200-row display window (#76). */
+  countByStatus(): Record<string, number> {
+    const rows = stmtCountByStatus.all() as any[];
+    const out: Record<string, number> = {};
+    for (const r of rows) out[String(r.status)] = Number(r.count) || 0;
+    return out;
   },
   countByChannelAndStatus(channel: string, status: string): number {
     const row = stmtCountByChannelStatus.get(channel, status) as any;
@@ -239,6 +266,16 @@ const stmtInsertAudit = db.prepare(`
 
 const stmtGetAuditLogs = db.prepare(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?`);
 
+/** Parse stored metadata JSON defensively; corrupt blobs fall back to undefined (#85). */
+function parseMetadataJson(raw: unknown): Record<string, unknown> | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToAuditRecord(row: any): AuditLogRecord {
   return {
     id: row.id,
@@ -259,7 +296,7 @@ function rowToAuditRecord(row: any): AuditLogRecord {
     packetLossPct: row.packet_loss_pct ?? undefined,
     webhookAckRatePct: row.webhook_ack_rate_pct ?? undefined,
     triggeredBy: row.triggered_by ?? undefined,
-    metadata: row.metadata_json ? JSON.parse(row.metadata_json) : undefined,
+    metadata: parseMetadataJson(row.metadata_json),
   };
 }
 
@@ -297,31 +334,32 @@ export const auditDB = {
     search?: string;
     limit?: number;
   }): { events: AuditLogRecord[]; stats: { totalEvents: number; heartbeats: number; statusChanges: number; latencyAlerts: number; configChanges: number } } {
-    let sql = "SELECT * FROM audit_logs WHERE 1=1";
+    // Build the filter clause once; it applies to both the event list and the
+    // summary stats so the stats reflect the active filters (#87).
+    let where = "WHERE 1=1";
     const args: any[] = [];
 
     if (params.channel && params.channel !== "all") {
-      sql += " AND (channel_id = ? OR channel_id = 'all')";
+      where += " AND (channel_id = ? OR channel_id = 'all')";
       args.push(params.channel);
     }
     if (params.eventType && params.eventType !== "all") {
-      sql += " AND event_type = ?";
+      where += " AND event_type = ?";
       args.push(params.eventType);
     }
     if (params.severity && params.severity !== "all") {
-      sql += " AND severity = ?";
+      where += " AND severity = ?";
       args.push(params.severity);
     }
     if (params.search && params.search.trim()) {
       const q = `%${params.search.trim()}%`;
-      sql += " AND (summary LIKE ? OR details LIKE ? OR channel_name LIKE ? OR channel_id LIKE ? OR id LIKE ? OR previous_status LIKE ? OR new_status LIKE ?)";
+      where += " AND (summary LIKE ? OR details LIKE ? OR channel_name LIKE ? OR channel_id LIKE ? OR id LIKE ? OR previous_status LIKE ? OR new_status LIKE ?)";
       args.push(q, q, q, q, q, q, q);
     }
 
-    sql += " ORDER BY created_at DESC LIMIT ?";
-    args.push(params.limit || 200);
-
-    const rows = db.prepare(sql).all(...args) as any[];
+    const rows = db
+      .prepare(`SELECT * FROM audit_logs ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...args, params.limit || 200) as any[];
     const events = rows.map(rowToAuditRecord);
 
     const statsRow = db.prepare(`
@@ -331,8 +369,8 @@ export const auditDB = {
         SUM(CASE WHEN event_type = 'status_change' THEN 1 ELSE 0 END) as statusChanges,
         SUM(CASE WHEN event_type = 'latency_alert' THEN 1 ELSE 0 END) as latencyAlerts,
         SUM(CASE WHEN event_type = 'config_change' THEN 1 ELSE 0 END) as configChanges
-      FROM audit_logs
-    `).get() as any;
+      FROM audit_logs ${where}
+    `).get(...args) as any;
 
     const stats = {
       totalEvents: statsRow?.total || 0,
