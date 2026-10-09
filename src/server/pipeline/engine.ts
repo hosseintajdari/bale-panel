@@ -23,6 +23,7 @@ export async function processPipelineMessage(
 
   // 2. Call Gemini
   let proposedReply = "";
+  let geminiSucceeded = false;
   try {
     const ai = getGenAI();
     let prompt = `You are Embednet OS Core Intelligence, an executive and operational engine for WhatsApp and local messengers.
@@ -48,6 +49,7 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
       config: { temperature: 0.3 },
     });
     proposedReply = geminiRes.text || "پاسخ آماده شد.";
+    geminiSucceeded = true;
   } catch {
     proposedReply = isRedlineMedical
       ? "هشدار: مورد ارجاع اورژانسی. با شماره ۱۱۵ تماس گرفته شود."
@@ -88,6 +90,15 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
     }
   }
 
+  // Confidence is derived from verifiable pipeline signals, not magic
+  // constants (#80): deterministic grounding raises it, an LLM fallback lowers it.
+  let confidenceScore = 0.75;
+  if (deterministicRule) confidenceScore += 0.1;
+  if (rareMedicineGuidance || priceInfo) confidenceScore += 0.05;
+  if (isRedlineMedical) confidenceScore += 0.05;
+  if (!geminiSucceeded) confidenceScore = Math.min(confidenceScore, 0.55);
+  confidenceScore = Math.round(Math.min(0.99, Math.max(0.5, confidenceScore)) * 100) / 100;
+
   const shadowId = `sh-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const newRecord: ShadowRecord = {
     id: shadowId,
@@ -101,7 +112,7 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
           : trimmed),
     proposedReply,
     timestamp: "اکنون",
-    confidenceScore: isRedlineMedical ? 0.99 : 0.92,
+    confidenceScore,
     riskLevel: isBaleAutoPersonal ? "safe" : riskLevel,
     status: isBaleAutoPersonal
       ? "approved"
@@ -131,7 +142,16 @@ Provide a concise, direct, helpful, and natural response in Persian. Avoid corpo
   // If live and approved, dispatch to Outbox
   if ((environmentMode === "live" || isBaleAutoPersonal) && newRecord.status === "approved") {
     await dispatchToOutbox(channel, senderId, newRecord.proposedReply);
-    newRecord.auditNote += " | (Live Dispatch Sent)";
+    newRecord.auditNote = `${newRecord.auditNote ?? ""} | (Live Dispatch Sent)`;
+    // Re-persist the marker so the stored row matches the returned record (#77).
+    // (bale-auto personal sessions are never persisted — nothing to update.)
+    if (!isBaleAutoPersonal) {
+      try {
+        shadowDB.updateStatus(newRecord.id, newRecord.status, newRecord.auditNote);
+      } catch (dbErr) {
+        console.error("[shadowDB.updateStatus] error:", dbErr);
+      }
+    }
   }
 
   return {
