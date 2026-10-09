@@ -155,6 +155,10 @@ Synthesize a concise, context-aware memory retrieval response answering the quer
 });
 
 // Bot Simulation endpoint: handles live chat with Gemini
+// Image guardrails (#82): shared with the BotSimulator client caps.
+const ALLOWED_IMAGE_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MAX_IMAGE_BASE64_CHARS = 4 * 1024 * 1024; // ~3 MiB of image bytes
+
 botRouter.post("/api/bot/chat", async (req, res) => {
   try {
     const {
@@ -172,6 +176,18 @@ botRouter.post("/api/bot/chat", async (req, res) => {
       return res.status(400).json({ error: "Message or image is required." });
     }
 
+    // Validate the image server-side: the client MIME is untrusted (#82).
+    let validatedMime: string | undefined;
+    if (imageBase64) {
+      if (typeof imageBase64 !== "string" || imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
+        return res.status(413).json({ error: "Image payload too large." });
+      }
+      if (!ALLOWED_IMAGE_MIME.includes(imageMimeType)) {
+        return res.status(400).json({ error: "Unsupported image MIME type." });
+      }
+      validatedMime = imageMimeType;
+    }
+
     const tenantId = (req.headers["x-tenant-id"] as string) || req.body?.tenantId || "default";
 
     // Persist inbound user message
@@ -181,7 +197,7 @@ botRouter.post("/api/bot/chat", async (req, res) => {
       tenantId,
       role: "user",
       content: message || "[Sent an image]",
-      image: imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : undefined,
+      image: imageBase64 ? `data:${validatedMime};base64,${imageBase64}` : undefined,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     });
 
@@ -208,7 +224,7 @@ botRouter.post("/api/bot/chat", async (req, res) => {
     if (imageBase64) {
       latestParts.push({
         inlineData: {
-          mimeType: imageMimeType,
+          mimeType: validatedMime,
           data: imageBase64,
         },
       });
@@ -260,7 +276,10 @@ botRouter.post("/api/bot/chat", async (req, res) => {
     res.json({
       reply: replyText,
       sessionId,
-      history: updatedHistory,
+      // Never ship image blobs back to the client; the sender already has them (#82).
+      history: updatedHistory.map((m: any) =>
+        m.image ? { ...m, image: undefined } : m
+      ),
     });
   } catch (error: any) {
     console.error("Error in /api/bot/chat:", error);
