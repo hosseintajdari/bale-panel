@@ -1,10 +1,15 @@
 import { Router } from "express";
+import { requireAdminAuth } from "../auth/index.js";
 import { telegramKeyboardDB, telegramWebAppDB } from "../../lib/db/database.js";
 import { getBaleDispatcher } from "../../lib/outbox/BaleDispatcher.js";
 import { BALE_WEBHOOK_SECRET } from "../config.js";
 import { adminIntegrationState } from "./state.js";
 
 export const adminRouter = Router();
+
+// Auth travels with the router: every route below requires admin auth even if
+// the router is mounted without the "/api/admin" prefix guard (#71).
+adminRouter.use("/api/admin", requireAdminAuth);
 
 // Integration Hub State (Manager Studio & Isolation)
 adminRouter.get("/api/admin/integrations", (req, res) => {
@@ -53,6 +58,24 @@ adminRouter.get("/api/admin/bale/health", async (req, res) => {
   }
 });
 
+/**
+ * SSRF guard for webhook targets: only public https hosts are allowed (#73).
+ */
+function isPublicHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (!host) return false;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+    return false;
+  }
+  if (host === "::1" || host === "::ffff:127.0.0.1") return false;
+  if (/^127\./.test(host) || /^0\./.test(host)) return false;
+  if (/^10\./.test(host) || /^192\.168\./.test(host)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+  if (/^(fc|fd)[0-9a-f]{0,2}:/.test(host)) return false; // fc00::/7 unique-local
+  if (/^fe[89ab][0-9a-f]:/.test(host)) return false; // fe80::/10 link-local
+  return true;
+}
+
 // POST Set Bale Webhook URL
 adminRouter.post("/api/admin/bale/set-webhook", async (req, res) => {
   try {
@@ -64,8 +87,33 @@ adminRouter.post("/api/admin/bale/set-webhook", async (req, res) => {
     if (!webhookUrl || typeof webhookUrl !== "string") {
       return res.status(400).json({ error: "webhookUrl is required." });
     }
-    const success = await bale.setWebhook(webhookUrl.trim(), secretToken || BALE_WEBHOOK_SECRET);
-    res.json({ success, webhookUrl });
+    const url = webhookUrl.trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return res.status(400).json({ error: "webhookUrl must be a valid absolute URL." });
+    }
+    if (parsed.protocol !== "https:") {
+      return res.status(400).json({ error: "webhookUrl must use https." });
+    }
+    if (!isPublicHost(parsed.hostname)) {
+      return res.status(400).json({ error: "webhookUrl must point to a public host." });
+    }
+    // An explicitly empty secretToken is rejected; an absent one falls back to
+    // the configured env secret. Never silently clear the webhook secret (#73).
+    if (secretToken !== undefined && (typeof secretToken !== "string" || !secretToken.trim())) {
+      return res.status(400).json({ error: "secretToken must not be empty." });
+    }
+    const effectiveSecret =
+      typeof secretToken === "string" && secretToken.trim() ? secretToken.trim() : BALE_WEBHOOK_SECRET;
+    if (!effectiveSecret) {
+      return res.status(400).json({
+        error: "No webhook secret available: provide secretToken or configure BALE_WEBHOOK_SECRET.",
+      });
+    }
+    const success = await bale.setWebhook(url, effectiveSecret);
+    res.json({ success, webhookUrl: url });
   } catch (err: any) {
     console.error("Error in /api/admin/bale/set-webhook:", err);
     res.status(500).json({ error: err.message || "Failed to set webhook." });
