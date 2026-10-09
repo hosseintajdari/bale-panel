@@ -38,7 +38,7 @@
 | `shadow_item.userMessage` | `string` | پیام اصلی کاربر |
 | `shadow_item.proposedReply` | `string` | پاسخ پیشنهادی هوش مصنوعی |
 | `shadow_item.timestamp` | `string` | ISO 8601 UTC |
-| `shadow_item.riskLevel` | `"safe" \| "caution" \| "redline"` | سطح ریسک |
+| `shadow_item.riskLevel` | `"safe" \| "medium_risk" \| "high_redline"` | سطح ریسک |
 
 ### فیلدهای اختیاری
 | فیلد | نوع | پیش‌فرض |
