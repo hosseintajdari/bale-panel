@@ -16,10 +16,10 @@ The default **code** mode passes only code-quality and tracked-secret gates. Mis
 Before a real release, provide runtime variables through the deployment environment (never command history or Git), record sanitized gateway evidence, then run:
 
 ```bash
-RELEASE_READINESS_MODE=release RELEASE_RUNTIME_EVIDENCE=verified npm run release:readiness
+RELEASE_READINESS_MODE=release RELEASE_RUNTIME_EVIDENCE=verified RELEASE_RUNTIME_EVIDENCE_FILE=.tmp/runtime-evidence.log npm run release:readiness
 ```
 
-Release mode fails unless the required runtime configuration is present and the operator has marked live gateway/webhook evidence as verified. It does not contact a gateway, register a webhook, or deploy.
+Release mode fails unless the required runtime configuration is present, the operator has marked live gateway/webhook evidence as verified, **and** `RELEASE_RUNTIME_EVIDENCE_FILE` points to an attached, sanitized evidence file. The file must exist, be non-empty (under 1 MiB), be newer than 14 days, and contain at least 3 timestamped log lines mentioning gateway/webhook activity. A bare `RELEASE_RUNTIME_EVIDENCE=verified` without the file is rejected. It does not contact a gateway, register a webhook, or deploy.
 
 ## Prime to Notion handoff
 
