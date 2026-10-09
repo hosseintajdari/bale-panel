@@ -107,10 +107,16 @@ export class BaleDispatcher {
 }
 
 let _baleDispatcher: BaleDispatcher | null = null;
+let _baleDispatcherToken: string | null = null;
 
 export function getBaleDispatcher(): BaleDispatcher | null {
   const token = process.env.BALE_BOT_TOKEN;
   if (!token) return null;
-  if (!_baleDispatcher) _baleDispatcher = new BaleDispatcher(token);
+  // Rebuild the singleton when the env token rotates; otherwise the stale
+  // token would keep signing requests (#83).
+  if (!_baleDispatcher || _baleDispatcherToken !== token) {
+    _baleDispatcher = new BaleDispatcher(token);
+    _baleDispatcherToken = token;
+  }
   return _baleDispatcher;
 }

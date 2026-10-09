@@ -8,7 +8,7 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test": "tsx --import ./tests/test-env.ts --test tests/modular_backend.test.ts",
     "control:check": "node scripts/project-control.mjs",
@@ -27,7 +27,6 @@
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "vite": "^6.2.3",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -42,7 +41,9 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
   },
-  "overrides": { "qs": "6.16.0" },
+  "overrides": {
+    "qs": "6.16.0"
+  },
   "allowScripts": {
     "better-sqlite3@13.0.3": true
   }

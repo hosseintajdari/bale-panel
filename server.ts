@@ -16,13 +16,47 @@ import { ledgerRouter } from "./src/server/ledger/index.js";
 import { pipelineRouter } from "./src/server/pipeline/index.js";
 import { vaultRouter } from "./src/server/vault/index.js";
 import { webhookRouter } from "./src/server/webhooks/index.js";
+import db from "./src/lib/db/database.js";
 
 // Validate environment variables on startup
 validateStartupEnv();
 
 export const app = express();
 
+// Security headers (#72): Helmet-equivalent set implemented dependency-free.
+// The CSP is tuned for the Vite SPA: 'unsafe-inline' is required because Vite
+// injects inline module scripts and HMR; data:/blob: cover in-app image previews.
+// (Deliberately no helmet dependency: the header set is small, fully visible,
+// and adds no supply-chain surface for a single-purpose server.)
+app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "connect-src 'self' ws: wss:",
+      "font-src 'self' data:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; ")
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-DNS-Prefetch-Control", "off");
+  next();
+});
+
 // Base Middleware
+// Tight body limit for auth endpoints: login/session payloads are tiny, so the
+// 20 MB global limit (needed for bot image payloads) must not apply here (#70).
+// body-parser skips re-parsing (req._body), so the first matching limit wins.
+app.use("/api/auth", express.json({ limit: "100kb" }));
 app.use(express.json({ limit: "20mb" }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,11 +107,33 @@ export async function startServer() {
     console.log(`Gemini Bot Studio running on http://127.0.0.1:${PORT}`);
   });
 
-  // Graceful shutdown lifecycle management
+  // Graceful shutdown lifecycle management (#89): stop accepting new
+  // connections, wait for in-flight requests, then close the SQLite handle.
+  // A timeout forces exit so a hung connection can't block shutdown forever.
+  let shuttingDown = false;
   const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`\n[SHUTDOWN] Received ${signal}. Closing server gracefully...`);
+    const forceTimer = setTimeout(() => {
+      console.error("[SHUTDOWN] Graceful shutdown timed out after 10s; forcing exit.");
+      try {
+        db.close();
+      } catch {
+        // Already closed or never opened — nothing more to do.
+      }
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
     server.close(() => {
-      console.log("[SHUTDOWN] HTTP server closed.");
+      clearTimeout(forceTimer);
+      console.log("[SHUTDOWN] HTTP server closed. Closing SQLite handle...");
+      try {
+        db.close();
+        console.log("[SHUTDOWN] SQLite handle closed.");
+      } catch (err) {
+        console.error("[SHUTDOWN] Failed to close SQLite handle:", err);
+      }
       process.exit(0);
     });
   };

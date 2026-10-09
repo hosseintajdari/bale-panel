@@ -56,12 +56,45 @@ const environment = {
   evolutionInstanceConfigured: Boolean(process.env.EVOLUTION_INSTANCE),
   evolutionWebhookSecretConfigured: Boolean(process.env.EVOLUTION_WEBHOOK_SECRET),
 };
-const runtimeEvidenceVerified = process.env.RELEASE_RUNTIME_EVIDENCE === "verified";
+// Runtime evidence must be an attached, sanitized artifact — a bare
+// RELEASE_RUNTIME_EVIDENCE=verified self-attestation is not enough (#90).
+function checkRuntimeEvidenceFile() {
+  const p = process.env.RELEASE_RUNTIME_EVIDENCE_FILE;
+  if (!p) return { ok: false, reason: "RELEASE_RUNTIME_EVIDENCE_FILE is not set" };
+  let stat;
+  try {
+    stat = fs.statSync(p);
+  } catch {
+    return { ok: false, reason: `evidence file not found: ${p}` };
+  }
+  if (!stat.isFile()) return { ok: false, reason: "evidence path is not a file" };
+  if (stat.size === 0) return { ok: false, reason: "evidence file is empty" };
+  if (stat.size > 1024 * 1024) return { ok: false, reason: "evidence file exceeds 1 MiB" };
+  const ageDays = (Date.now() - stat.mtimeMs) / 86400000;
+  if (ageDays > 14) return { ok: false, reason: "evidence file is older than 14 days" };
+  const content = fs.readFileSync(p, "utf8");
+  const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 3) return { ok: false, reason: "evidence file has fewer than 3 log lines" };
+  if (!lines.some((l) => /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(l)))
+    return { ok: false, reason: "evidence file has no timestamped entries" };
+  if (!/gateway|webhook/i.test(content))
+    return { ok: false, reason: "evidence file does not mention gateway/webhook activity" };
+  return { ok: true, reason: "" };
+}
+const runtimeEvidence = checkRuntimeEvidenceFile();
+const runtimeEvidenceVerified =
+  process.env.RELEASE_RUNTIME_EVIDENCE === "verified" && runtimeEvidence.ok;
 const runtimeBlockers = [];
 for (const [name, configured] of Object.entries(environment)) {
   if (!configured) runtimeBlockers.push(`${name} is not configured in this release environment`);
 }
-if (!runtimeEvidenceVerified) runtimeBlockers.push("live gateway/webhook verification evidence is not marked verified");
+if (!runtimeEvidenceVerified) {
+  runtimeBlockers.push(
+    runtimeEvidence.ok
+      ? "live gateway/webhook verification evidence is not marked verified (set RELEASE_RUNTIME_EVIDENCE=verified)"
+      : `runtime evidence rejected: ${runtimeEvidence.reason}`
+  );
+}
 
 const head = git("rev-parse", "HEAD");
 let rollbackCommit = null;
@@ -85,6 +118,8 @@ const report = {
   },
   environment,
   runtimeEvidenceVerified,
+  runtimeEvidenceFile: process.env.RELEASE_RUNTIME_EVIDENCE_FILE ?? null,
+  runtimeEvidenceCheck: runtimeEvidence.ok ? "passed" : runtimeEvidence.reason,
   blockers: [...(codeReady ? [] : ["one or more code-quality gates failed or a tracked-secret risk was found"]), ...runtimeBlockers],
   rollback: rollbackCommit
     ? { targetCommit: rollbackCommit, command: `git revert --no-edit ${head}` }
@@ -96,7 +131,7 @@ const report = {
     evidence: checks.map(({ name, passed }) => `${name}: ${passed ? "passed" : "failed"}`),
     safeNextAction: releaseReady
       ? "Request connector approval, then publish this evidence to Notion."
-      : "Collect sanitized runtime gateway evidence and rerun with RELEASE_READINESS_MODE=release RELEASE_RUNTIME_EVIDENCE=verified.",
+      : "Collect sanitized runtime gateway evidence into a file and rerun with RELEASE_READINESS_MODE=release RELEASE_RUNTIME_EVIDENCE=verified RELEASE_RUNTIME_EVIDENCE_FILE=<path>.",
   },
 };
 

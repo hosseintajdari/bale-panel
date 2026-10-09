@@ -3,7 +3,6 @@ import {
   Plus,
   Mic,
   ArrowUp,
-  ChevronDown,
   Sparkles,
   Paperclip,
   Terminal,
@@ -16,26 +15,22 @@ interface AgentCommandDockProps {
   isProcessing?: boolean;
 }
 
-const AVAILABLE_MODELS = [
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', tier: 'Fast' },
-  { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', tier: 'Reasoning' },
-  { id: 'local-mistral', label: 'Hermes-3 Llama-3.1', tier: 'Local' },
-  { id: 'gpt-4o-mini', label: 'GPT-4o Mini', tier: 'Cloud' },
-];
+// The only model the pipeline engine actually serves (src/server/pipeline/engine.ts).
+// The picker was removed: offering other engines was cosmetic (#81).
+const ENGINE_MODEL_ID = 'gemini-2.0-flash';
+const ENGINE_MODEL_LABEL = 'Gemini 2.0 Flash';
 
 export const AgentCommandDock: React.FC<AgentCommandDockProps> = ({
   onSendMessage,
   isProcessing = false,
 }) => {
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState(AVAILABLE_MODELS[0]);
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || isProcessing) return;
-    onSendMessage(input.trim(), selectedModel.id);
+    onSendMessage(input.trim(), ENGINE_MODEL_ID);
     setInput('');
   };
 
@@ -73,44 +68,14 @@ export const AgentCommandDock: React.FC<AgentCommandDockProps> = ({
 
         {/* Right Controls: Model Switcher, Mic, Sound, Send */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Model Selector Pill */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-300 hover:text-white transition-colors cursor-pointer text-xs font-mono"
-            >
-              <Sparkles className="w-3 h-3 text-blue-400" />
-              <span className="font-medium text-[11px]">{selectedModel.label}</span>
-              <span className="text-[9px] px-1 rounded bg-white/[0.06] text-zinc-400">{selectedModel.tier}</span>
-              <ChevronDown className="w-3 h-3 text-zinc-500 ml-0.5" />
-            </button>
-
-            {isModelDropdownOpen && (
-              <div className="absolute right-0 bottom-full mb-2 w-52 bg-[#0A0C10] border border-[#222838] rounded-xl shadow-2xl p-1 z-50 space-y-0.5">
-                <div className="px-2 py-1 text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
-                  Select Agent Engine
-                </div>
-                {AVAILABLE_MODELS.map((model) => (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedModel(model);
-                      setIsModelDropdownOpen(false);
-                    }}
-                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer text-left ${
-                      selectedModel.id === model.id
-                        ? 'bg-blue-500/20 text-blue-300 font-medium'
-                        : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200'
-                    }`}
-                  >
-                    <span className="truncate">{model.label}</span>
-                    <span className="text-[9px] font-mono text-zinc-500">{model.tier}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+          {/* Engine badge — the pipeline only serves gemini-2.0-flash (#81) */}
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-300 text-xs font-mono"
+            title="Fixed agent engine — model switching is not implemented server-side"
+          >
+            <Sparkles className="w-3 h-3 text-blue-400" />
+            <span className="font-medium text-[11px]">{ENGINE_MODEL_LABEL}</span>
+            <span className="text-[9px] px-1 rounded bg-white/[0.06] text-zinc-400">Fast</span>
           </div>
 
           {/* Voice Input Mic */}

@@ -114,6 +114,7 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
     if (isSaving) return;
     setIsSaving(true);
 
+    const prevConfig = localPulseConfig;
     const newEnabled = !localPulseConfig.enabled;
     const updatedConfig: GatewayPulseConfig = {
       ...localPulseConfig,
@@ -133,9 +134,13 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
         if (onUpdatePulseConfig) onUpdatePulseConfig(data.config);
         if (data.channels && onUpdateChannels) onUpdateChannels(data.channels);
         showFeedback(newEnabled ? 'Pulse telemetry monitoring activated' : 'Pulse telemetry monitoring disabled');
+      } else {
+        setLocalPulseConfig(prevConfig);
+        showFeedback('Failed to update pulse settings', 'error');
       }
     } catch (err) {
       console.error('Failed to toggle pulse master:', err);
+      setLocalPulseConfig(prevConfig);
       showFeedback('Failed to update pulse settings', 'error');
     } finally {
       setIsSaving(false);
@@ -147,6 +152,7 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
     if (isSaving) return;
     setIsSaving(true);
 
+    const prevConfig = localPulseConfig;
     const currentVal = localPulseConfig.gateways[gatewayId] ?? true;
     const updatedGateways = {
       ...localPulseConfig.gateways,
@@ -169,9 +175,13 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
       if (data.success && data.config) {
         if (onUpdatePulseConfig) onUpdatePulseConfig(data.config);
         if (data.channels && onUpdateChannels) onUpdateChannels(data.channels);
+      } else {
+        setLocalPulseConfig(prevConfig);
+        showFeedback('Failed to toggle gateway', 'error');
       }
     } catch (err) {
       console.error('Failed to toggle gateway telemetry:', err);
+      setLocalPulseConfig(prevConfig);
       showFeedback('Failed to toggle gateway', 'error');
     } finally {
       setIsSaving(false);
@@ -182,6 +192,7 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
   const handleChangeInterval = async (seconds: number) => {
     if (isSaving || localPulseConfig.refreshIntervalSec === seconds) return;
     setIsSaving(true);
+    const prevConfig = localPulseConfig;
     const updatedConfig: GatewayPulseConfig = {
       ...localPulseConfig,
       refreshIntervalSec: seconds,
@@ -198,9 +209,13 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
       if (data.success && data.config && onUpdatePulseConfig) {
         onUpdatePulseConfig(data.config);
         if (data.channels && onUpdateChannels) onUpdateChannels(data.channels);
+      } else {
+        setLocalPulseConfig(prevConfig);
+        showFeedback('Failed to update refresh interval', 'error');
       }
     } catch (err) {
       console.error('Failed to change pulse interval:', err);
+      setLocalPulseConfig(prevConfig);
       showFeedback('Failed to update refresh interval', 'error');
     } finally {
       setIsSaving(false);

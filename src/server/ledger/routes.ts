@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { globalPrivacySettings, type LedgerItem, serverLedgerItems } from "./state.js";
+import { globalPrivacySettings, DOMAIN_CATEGORIES, type LedgerItem, serverLedgerItems } from "./state.js";
 
 export const ledgerRouter = Router();
 
@@ -12,6 +12,9 @@ ledgerRouter.post("/api/ledger/items", (req, res) => {
   const { title, domainCategory, summary, activeContext } = req.body || {};
   if (!title || typeof title !== "string" || !title.trim()) {
     return res.status(400).json({ error: "عنوان الزامی است." });
+  }
+  if (domainCategory && !(DOMAIN_CATEGORIES as readonly string[]).includes(domainCategory)) {
+    return res.status(400).json({ error: `domainCategory must be one of: ${DOMAIN_CATEGORIES.join(", ")}.` });
   }
 
   const newItem: LedgerItem = {
@@ -41,7 +44,12 @@ ledgerRouter.patch("/api/ledger/items/:id", (req, res) => {
   if (typeof summary === "string") item.summary = summary;
   if (typeof activeContext === "string") item.activeContext = activeContext;
   if (typeof tasksPending === "number") item.tasksPending = tasksPending;
-  if (domainCategory) item.domainCategory = domainCategory;
+  if (domainCategory) {
+    if (!(DOMAIN_CATEGORIES as readonly string[]).includes(domainCategory)) {
+      return res.status(400).json({ error: `domainCategory must be one of: ${DOMAIN_CATEGORIES.join(", ")}.` });
+    }
+    item.domainCategory = domainCategory;
+  }
   item.lastUpdated = "اکنون";
 
   res.json({ success: true, item });

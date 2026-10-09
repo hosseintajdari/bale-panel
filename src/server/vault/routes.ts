@@ -1,9 +1,14 @@
 import { Router } from "express";
+import { requireAdminAuth } from "../auth/index.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { getSafeCredentialsList, vaultCredentialsStore } from "./store.js";
 import type { EncryptedVaultRecord } from "./types.js";
 
 export const vaultRouter = Router();
+
+// Auth travels with the router: every route below requires admin auth even if
+// the router is mounted without the "/api/admin" prefix guard (#71).
+vaultRouter.use("/api/admin", requireAdminAuth);
 
 // GET list of encrypted credentials
 vaultRouter.get("/api/admin/auth-credentials", (req, res) => {
@@ -120,6 +125,7 @@ vaultRouter.post("/api/admin/auth-credentials/test/:id", (req, res) => {
     const decrypted = decryptSecret(cred.encryptedBlob);
     cred.lastUsed = "اکنون (تایید اعتبار موفق)";
     cred.status = "active";
+    cred.lastIntegrityCheck = "PASSED";
 
     // Format validation checks
     let formatDetail = "فرمت کلید استاندارد است.";
@@ -141,7 +147,9 @@ vaultRouter.post("/api/admin/auth-credentials/test/:id", (req, res) => {
       envKey: cred.envKeyName,
     });
   } catch (err: any) {
-    cred.status = "revoked";
+    // A failed integrity test reports the failure; it must not permanently
+    // mark the credential "revoked" (#69). Revocation stays an explicit action.
+    cred.lastIntegrityCheck = "FAILED";
     res.status(500).json({
       error: `خطا در رمزگشایی و اعتبارسنجی: ${err.message}`,
       integrity: "FAILED",

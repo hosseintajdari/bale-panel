@@ -14,6 +14,28 @@ export interface SessionRecord {
 
 export const operatorSessions = new Map<string, number | SessionRecord>();
 
+/**
+ * Drop expired sessions so the in-memory map can't grow unbounded (#68).
+ * Expired entries were previously only removed lazily on access.
+ */
+export function sweepExpiredSessions(now: number = Date.now()): number {
+  let removed = 0;
+  for (const [id, entry] of operatorSessions) {
+    const expiresAt = typeof entry === "number" ? entry : entry.expiresAt;
+    if (!expiresAt || expiresAt <= now) {
+      operatorSessions.delete(id);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// Run the sweeper every 15 minutes; unref'd so it never keeps the process alive.
+const sessionSweepTimer = setInterval(() => sweepExpiredSessions(), 15 * 60 * 1000);
+if (typeof (sessionSweepTimer as any).unref === "function") {
+  (sessionSweepTimer as any).unref();
+}
+
 export function secureEquals(left: string, right: string): boolean {
   if (typeof left !== "string" || typeof right !== "string") return false;
   const hashLeft = crypto.createHash("sha256").update(left).digest();

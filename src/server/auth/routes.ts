@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { Router } from "express";
+import { requireAdminAuth } from "./middleware.js";
 import { apiKeyDB, type UserRole } from "../../lib/db/database.js";
 import { PANEL_API_SECRET } from "../config.js";
 import {
@@ -16,6 +17,10 @@ import {
 } from "./session.js";
 
 export const authRouter = Router();
+
+// The /api/admin/keys routes below live on this router: require admin auth at
+// the router level so the guard travels with it (#71).
+authRouter.use("/api/admin", requireAdminAuth);
 
 authRouter.get("/api/auth/session", (req, res) => {
   const user = authenticateToken(req.headers["authorization"], req.headers.cookie);
@@ -80,7 +85,9 @@ authRouter.post("/api/admin/keys", (req, res) => {
   const cleanTenantId = typeof tenantId === "string" && tenantId.trim() ? tenantId.trim() : "default";
 
   // Generate a random high-entropy token
-  const rawToken = `emb_${role}_${crypto.randomBytes(24).toString("hex")}`;
+  // Role-neutral prefix: the privilege level lives only in the server-side
+  // key record, never in the token string itself (#74).
+  const rawToken = `emb_${crypto.randomBytes(24).toString("hex")}`;
   const tokenHash = hashToken(rawToken);
   const id = `key-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
 

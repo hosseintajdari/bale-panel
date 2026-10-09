@@ -42,12 +42,8 @@ export const PipelineConsole = memo<PipelineConsoleProps>(({
             </div>
 
             <div className="space-y-1.5 overflow-y-auto pr-1 custom-scrollbar">
-              {(latestTrace || [
-                { stage: 'GATEWAY_INGEST', title: 'Gateway Ingest & Signature', status: 'passed', detail: 'Header verification & token validated', durationMs: 2 },
-                { stage: 'ENVELOPE_NORMALIZE', title: 'Normalize UnifiedMessage', status: 'passed', detail: 'Messenger-agnostic envelope wrapping', durationMs: 1 },
-                { stage: 'DETERMINISTIC_RULES', title: 'Deterministic Rules & Redlines', status: 'passed', detail: 'Catalog check & redlines passed', durationMs: 4 },
-                { stage: 'SHADOW_EVALUATION', title: 'Shadow Mode Evaluation', status: 'warning', detail: 'BALE_LLM_MODE=shadow (Queued for review)', durationMs: 3 },
-              ]).map((step, idx) => (
+              {latestTrace ? (
+                latestTrace.map((step, idx) => (
                 <div
                   key={idx}
                   className="flex items-start justify-between p-2 rounded-lg bg-white/[0.02] border border-white/[0.04] text-xs"
@@ -67,7 +63,16 @@ export const PipelineConsole = memo<PipelineConsoleProps>(({
                     {step.durationMs}ms
                   </span>
                 </div>
-              ))}
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <Terminal className="w-5 h-5 text-zinc-600 mb-2" />
+                  <div className="text-xs font-medium text-zinc-400">Awaiting execution</div>
+                  <div className="text-[11px] text-zinc-600 mt-1 font-mono">
+                    No pipeline trace yet — stages appear here after the first run.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -24,6 +24,49 @@ interface PipelineState {
   fetchInitialState: () => Promise<void>;
 }
 
+// Tracks record ids with local updates (SSE events, operator actions) so a stale
+// in-flight poll snapshot can't clobber them (#64).
+const localWriteAt = new Map<string, number>();
+const LOCAL_WRITE_TTL_MS = 60_000;
+
+function markLocalWrite(id: string): void {
+  localWriteAt.set(id, Date.now());
+}
+
+function pruneLocalWrites(now: number): void {
+  for (const [id, at] of localWriteAt) {
+    if (now - at > LOCAL_WRITE_TTL_MS) localWriteAt.delete(id);
+  }
+}
+
+/**
+ * Merge a poll snapshot into the local queue by id (upsert) instead of
+ * wholesale-replacing it. The local record wins when it was updated after the
+ * poll started (an SSE patch or operator action racing the poll); local-only
+ * records with recent writes are preserved, everything else follows the snapshot.
+ */
+function mergeQueue(
+  local: ShadowReviewItem[],
+  incoming: ShadowReviewItem[],
+  pollStartedAt: number
+): ShadowReviewItem[] {
+  pruneLocalWrites(pollStartedAt);
+  const localById = new Map(local.map((r) => [r.id, r]));
+  const merged: ShadowReviewItem[] = [];
+  for (const rec of incoming) {
+    const existing = localById.get(rec.id);
+    const writtenAt = localWriteAt.get(rec.id) ?? 0;
+    merged.push(existing && writtenAt >= pollStartedAt ? existing : rec);
+    localById.delete(rec.id);
+  }
+  for (const rec of localById.values()) {
+    if (localWriteAt.has(rec.id)) {
+      merged.unshift(rec);
+    }
+  }
+  return merged;
+}
+
 export const usePipelineStore = create<PipelineState>((set, get) => ({
   environmentMode: 'shadow',
   activeSessionId: 'tg-gateway-migration',
@@ -37,15 +80,19 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   setLatestPipelineTrace: (trace) => set({ latestPipelineTrace: trace }),
   setLatestPipelineRecord: (record) => set({ latestPipelineRecord: record }),
 
-  addToQueue: (record) =>
-    set((state) => ({ shadowQueue: [record, ...state.shadowQueue] })),
+  addToQueue: (record) => {
+    markLocalWrite(record.id);
+    set((state) => ({ shadowQueue: [record, ...state.shadowQueue] }));
+  },
 
-  updateQueueItem: (id, patch) =>
+  updateQueueItem: (id, patch) => {
+    markLocalWrite(id);
     set((state) => ({
       shadowQueue: state.shadowQueue.map((item) =>
         item.id === id ? { ...item, ...patch } : item
       ),
-    })),
+    }));
+  },
 
   processMessage: async (channel, senderDisplay, text) => {
     const { activeSessionId, environmentMode } = get();
@@ -87,6 +134,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       });
       const data = await res.json();
       if (data.success) {
+        markLocalWrite(id);
         set((state) => ({
           shadowQueue: state.shadowQueue.map((item) =>
             item.id === id ? { ...item, ...data.item } : item
@@ -99,11 +147,14 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   },
 
   fetchInitialState: async () => {
+    const pollStartedAt = Date.now();
     try {
       const res = await authFetch('/api/pipeline/state');
       const data = await res.json();
       if (data.shadowQueue) {
-        set({ shadowQueue: data.shadowQueue });
+        set((state) => ({
+          shadowQueue: mergeQueue(state.shadowQueue, data.shadowQueue, pollStartedAt),
+        }));
       }
       if (data.latestPipelineTrace) {
         set({ latestPipelineTrace: data.latestPipelineTrace });

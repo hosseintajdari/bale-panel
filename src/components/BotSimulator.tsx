@@ -82,6 +82,12 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
 
   const [inputPrompt, setInputPrompt] = useState<string>('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageMime, setSelectedImageMime] = useState<string>('image/jpeg');
+
+  // Upload guardrails (#67, #82): Gemini inlineData supports these types;
+  // anything else (or >2 MiB) is rejected before it reaches state or the API.
+  const ALLOWED_IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [lastApiPayload, setLastApiPayload] = useState<any>(null);
   const [sessionId, setSessionId] = useState<string>(() => `sess_${Date.now()}`);
@@ -182,19 +188,45 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const rejectFile = (reason: string) => {
+      const errorMsg: ChatMessage = {
+        id: `err-${Date.now()}`,
+        role: 'system',
+        content: `\u26a0\ufe0f Image rejected: ${reason}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      e.target.value = '';
+    };
+
+    if (!ALLOWED_IMAGE_MIME.includes(file.type)) {
+      rejectFile(`unsupported type "${file.type || 'unknown'}". Use JPEG, PNG, WebP or GIF.`);
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      rejectFile(`file is ${(file.size / 1048576).toFixed(1)} MiB; limit is 2 MiB.`);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1];
       setSelectedImage(base64);
+      setSelectedImageMime(file.type);
     };
     reader.readAsDataURL(file);
+  };
+
+  const clearSelectedImage = () => {
+    setSelectedImage(null);
+    setSelectedImageMime('image/jpeg');
   };
 
   // Clear or Reset Chat
   const handleResetSession = async () => {
     const newSession = `sess_${Date.now()}`;
     setSessionId(newSession);
-    setSelectedImage(null);
+    clearSelectedImage();
     setMessages([
       {
         id: `welcome-${Date.now()}`,
@@ -229,7 +261,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
       id: userMessageId,
       role: 'user',
       content: text.trim() || '[Attached an image]',
-      image: selectedImage ? `data:image/jpeg;base64,${selectedImage}` : undefined,
+      image: selectedImage ? `data:${selectedImageMime};base64,${selectedImage}` : undefined,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'delivered',
     };
@@ -237,7 +269,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
     setMessages((prev) => [...prev, userMsg]);
     setInputPrompt('');
     const currentImg = selectedImage;
-    setSelectedImage(null);
+    clearSelectedImage();
     setIsLoading(true);
 
     const payload = {
@@ -245,7 +277,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
       platform,
       message: text.trim(),
       imageBase64: currentImg || undefined,
-      imageMimeType: 'image/jpeg',
+      imageMimeType: currentImg ? selectedImageMime : undefined,
       systemInstruction: customSystemInstruction,
       temperature,
       enableTools,
@@ -882,14 +914,14 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
             <div className="px-4 py-2 bg-[#141414] border-t border-[#222222] flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <img
-                  src={`data:image/jpeg;base64,${selectedImage}`}
+                  src={`data:${selectedImageMime};base64,${selectedImage}`}
                   alt="Preview"
                   className="w-8 h-8 rounded object-cover border border-[#333333]"
                 />
                 <span className="text-xs text-[#AAAAAA] font-mono">Image attached (Gemini Vision Part)</span>
               </div>
               <button
-                onClick={() => setSelectedImage(null)}
+                onClick={() => clearSelectedImage()}
                 className="text-xs text-red-400 hover:text-red-300 font-mono cursor-pointer"
               >
                 Remove
