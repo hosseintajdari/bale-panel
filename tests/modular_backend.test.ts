@@ -254,7 +254,8 @@ test("Modular Backend Test Suite", async (t) => {
     assert.equal(createKeyRes.body.success, true);
     const auditorToken = createKeyRes.body.key.rawToken;
     const auditorKeyId = createKeyRes.body.key.id;
-    assert.ok(auditorToken.startsWith("emb_auditor_"));
+    assert.ok(auditorToken.startsWith("emb_"));
+    assert.ok(!auditorToken.includes("auditor")); // role must not leak into the token (#74)
 
     // Auditor key can access auditor-allowed route (/api/gateways/pulse-ping)
     const auditorAccessRes = await request(testServer, {
@@ -1213,7 +1214,8 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(opKeyRes.status, 200);
     const opToken = opKeyRes.body.key.rawToken;
-    assert.ok(opToken.startsWith("emb_operator_"));
+    assert.ok(opToken.startsWith("emb_"));
+    assert.ok(!opToken.includes("operator")); // role must not leak into the token (#74)
 
     const admKeyRes = await request(testServer, {
       method: "POST",
@@ -1223,7 +1225,8 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(admKeyRes.status, 200);
     const admToken = admKeyRes.body.key.rawToken;
-    assert.ok(admToken.startsWith("emb_admin_"));
+    assert.ok(admToken.startsWith("emb_"));
+    assert.ok(!admToken.includes("admin")); // role must not leak into the token (#74)
 
     // 21.3 Operator role lacks admin privilege -> 403 Forbidden on all admin routes
     for (const ep of adminEndpoints) {
@@ -1527,7 +1530,8 @@ test("Modular Backend Test Suite", async (t) => {
     });
     assert.equal(opKeyRes.status, 200);
     const operatorToken = opKeyRes.body.key.rawToken;
-    assert.ok(operatorToken.startsWith("emb_operator_"));
+    assert.ok(operatorToken.startsWith("emb_"));
+    assert.ok(!operatorToken.includes("operator")); // role must not leak into the token (#74)
 
     // 23.2 Scoped RBAC validation for /api/evolution/inbound-message
     // Unauthenticated -> 401
@@ -1740,7 +1744,7 @@ test("Modular Backend Test Suite", async (t) => {
             userMessage: "سلام، شربت دیفن‌هیدرامین برای کودک ۲ ساله موجود دارید؟",
             proposedReply: "مصرف این دارو در اطفال زیر ۲ سال نیازمند ارزیابی داروساز است.",
             confidenceScore: 0.94,
-            riskLevel: "caution",
+            riskLevel: "medium_risk",
             deterministicRuleApplied: "PEDIATRIC_DOSE_GUARD",
           },
           pipeline_traces: medTraceSteps,
@@ -1760,7 +1764,7 @@ test("Modular Backend Test Suite", async (t) => {
       );
       assert.ok(medEvent, "SSE stream must receive shadow-update for bale-med ingest");
       assert.equal(medEvent.data.record.channel, "bale");
-      assert.equal(medEvent.data.record.riskLevel, "caution");
+      assert.equal(medEvent.data.record.riskLevel, "medium_risk");
       assert.ok(Array.isArray(medEvent.data.trace), "SSE event must contain pipeline execution trace steps");
       assert.equal(medEvent.data.trace.length, 4);
       assert.equal(medEvent.data.trace[0].stage, "GATEWAY_INGEST");
