@@ -15,4 +15,6 @@ export interface EncryptedVaultRecord {
   createdAt: string;
   lastUsed?: string;
   status: "active" | "revoked" | "untested";
+  /** Outcome of the most recent integrity test; a failure here never revokes (#69). */
+  lastIntegrityCheck?: "PASSED" | "FAILED";
 }
