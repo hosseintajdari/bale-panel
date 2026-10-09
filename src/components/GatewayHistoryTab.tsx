@@ -367,7 +367,7 @@ export const GatewayHistoryTab = memo<GatewayHistoryTabProps>(({ onRefreshChanne
                           {ev.latencyMs}ms
                         </span>
                       )}
-                      <span className="text-zinc-600 hidden sm:inline">#{ev.id.slice(0, 7)}</span>
+                      <span className="text-zinc-600 hidden sm:inline">#{typeof ev.id === "string" ? ev.id.slice(0, 7) : "—"}</span>
                     </div>
                   </div>
 
