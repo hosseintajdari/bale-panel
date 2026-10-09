@@ -146,19 +146,18 @@ export const NoteTakerMemoryPanel: React.FC<NoteTakerMemoryPanelProps> = ({
 
   // Toggle Action item completion
   const handleToggleAction = (noteId: string, actionId: string) => {
-    setNotes((prev) =>
-      prev.map((n) => {
-        if (n.id !== noteId) return n;
-        const updatedActions = n.actionItems.map((a) =>
-          a.id === actionId ? { ...a, completed: !a.completed } : a
-        );
-        const updatedNote = { ...n, actionItems: updatedActions };
-        if (selectedNote?.id === noteId) {
-          setSelectedNote(updatedNote);
-        }
-        return updatedNote;
-      })
-    );
+    const target = notes.find((n) => n.id === noteId);
+    if (!target) return;
+    const updatedNote = {
+      ...target,
+      actionItems: target.actionItems.map((a) =>
+        a.id === actionId ? { ...a, completed: !a.completed } : a
+      ),
+    };
+    setNotes((prev) => prev.map((n) => (n.id === noteId ? updatedNote : n)));
+    if (selectedNote?.id === noteId) {
+      setSelectedNote(updatedNote);
+    }
   };
 
   // Execute Semantic Memory Query
