@@ -1,7 +1,11 @@
+/** Canonical domain categories shared across ledger routes (#78). */
+export const DOMAIN_CATEGORIES = ["Executive", "Clinical", "Operations", "Personal", "Pharmacy"] as const;
+export type DomainCategory = (typeof DOMAIN_CATEGORIES)[number];
+
 export interface LedgerItem {
   id: string;
   title: string;
-  domainCategory: "Executive" | "Clinical" | "Operations" | "Personal" | "Pharmacy";
+  domainCategory: DomainCategory;
   summary: string;
   activeContext: string;
   tasksPending: number;
