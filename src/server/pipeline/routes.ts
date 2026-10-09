@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { EventEmitter } from "events";
-import { shadowDB, type ShadowRecord } from "../../lib/db/database.js";
+import { shadowDB, RISK_LEVELS, type RiskLevel, type ShadowRecord } from "../../lib/db/database.js";
 import { gatewayPulseConfig, getChannelsWithTelemetry } from "../gateways/index.js";
 import { globalPrivacySettings } from "../ledger/index.js";
 import { dispatchToOutbox } from "../outbox/index.js";
@@ -12,9 +12,32 @@ import { PipelineTraceStep } from "./types.js";
 
 export const pipelineRouter = Router();
 
+/** Whitelist riskLevel at ingest (#86): absent -> "safe" default, unknown -> throw. */
+function coerceRiskLevel(value: unknown): RiskLevel {
+  if (value === undefined || value === null || value === "") return "safe";
+  if (typeof value === "string" && (RISK_LEVELS as readonly string[]).includes(value)) {
+    return value as RiskLevel;
+  }
+  throw new Error(`invalid riskLevel: ${String(value)}`);
+}
+
 // In-memory cache of latest live pipeline execution trace & record for initial page load / inspector
 let latestPipelineTrace: PipelineTraceStep[] | null = null;
 let latestPipelineRecord: ShadowRecord | null = null;
+let latestPipelineAt = 0;
+
+/**
+ * Publish the newest trace/record only: concurrent requests can finish out of
+ * order, and a stale completion must not overwrite a newer update (#76).
+ * `at` is captured when the request starts; single-threaded event loop makes
+ * the comparison exact.
+ */
+function publishLatest(trace: PipelineTraceStep[] | null, record: ShadowRecord, at: number): void {
+  if (at < latestPipelineAt) return;
+  latestPipelineAt = at;
+  if (trace) latestPipelineTrace = trace;
+  latestPipelineRecord = record;
+}
 
 // ---------------------------------------------------------------------------
 // SSE Event Bus — in-process pub/sub for real-time shadow queue updates
@@ -27,10 +50,14 @@ shadowEventBus.setMaxListeners(100); // support up to 100 concurrent panel tabs
 // ---------------------------------------------------------------------------
 pipelineRouter.get("/api/pipeline/state", (req: Request, res: Response) => {
   const queue = shadowDB.getAll();
-  const allRecords = shadowDB.getAll();
-  const totalProcessed = allRecords.filter((r) => r.status !== "pending").length;
-  const autoApprovedSafe = allRecords.filter((r) => r.status === "approved").length;
-  const rejectedOrRedline = allRecords.filter((r) => r.status === "rejected").length;
+  const statusCounts = shadowDB.countByStatus();
+  const pending = statusCounts["pending"] || 0;
+  const approved = statusCounts["approved"] || 0;
+  const rejected = statusCounts["rejected"] || 0;
+  const modified = statusCounts["modified"] || 0;
+  const totalProcessed = approved + rejected + modified;
+  const autoApprovedSafe = approved;
+  const rejectedOrRedline = rejected;
 
   res.json({
     status: "operational",
@@ -43,7 +70,7 @@ pipelineRouter.get("/api/pipeline/state", (req: Request, res: Response) => {
     latestPipelineRecord,
     stats: {
       totalProcessed,
-      shadowIntercepted: queue.length,
+      shadowIntercepted: pending,
       autoApprovedSafe,
       rejectedOrRedline,
       ephemeralSessions: globalPrivacySettings.ephemeralSessionsCount,
@@ -62,25 +89,49 @@ pipelineRouter.get("/api/pipeline/stream", requireOperatorAuth, (req: Request, r
   res.setHeader("X-Accel-Buffering", "no"); // nginx: disable buffering
   res.flushHeaders();
 
-  // Send initial ping so client knows connection is live
-  res.write(`event: ping\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+  let closed = false;
+
+  // Writes must never throw into the request handler: a dead client socket
+  // would otherwise crash the stream or leak the listener/interval (#84).
+  const safeWrite = (chunk: string): void => {
+    if (closed || res.writableEnded || res.destroyed) return;
+    try {
+      res.write(chunk);
+    } catch {
+      teardown();
+    }
+  };
 
   // Forward shadow-update events from bus to this SSE client
   const onShadowUpdate = (payload: object) => {
-    res.write(`event: shadow-update\ndata: ${JSON.stringify(payload)}\n\n`);
+    safeWrite(`event: shadow-update\ndata: ${JSON.stringify(payload)}\n\n`);
   };
-  shadowEventBus.on("shadow-update", onShadowUpdate);
 
   // Heartbeat every 30 s to prevent proxy/load-balancer timeouts
   const heartbeat = setInterval(() => {
-    res.write(`event: ping\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+    safeWrite(`event: ping\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
   }, 30_000);
 
-  // Cleanup on client disconnect
-  req.on("close", () => {
+  function teardown(): void {
+    if (closed) return;
+    closed = true;
     clearInterval(heartbeat);
     shadowEventBus.off("shadow-update", onShadowUpdate);
-  });
+    if (!res.writableEnded && !res.destroyed) {
+      try {
+        res.end();
+      } catch {
+        // Client already gone.
+      }
+    }
+  }
+
+  // Cleanup on client disconnect
+  req.on("close", teardown);
+
+  // Send initial ping so client knows connection is live
+  safeWrite(`event: ping\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+  shadowEventBus.on("shadow-update", onShadowUpdate);
 });
 
 // ---------------------------------------------------------------------------
@@ -115,6 +166,15 @@ pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (r
       return res.status(400).json({ error: "shadow_item must include userMessage and proposedReply" });
     }
 
+    let riskLevel: RiskLevel;
+    try {
+      riskLevel = coerceRiskLevel(shadow_item.riskLevel);
+    } catch {
+      return res.status(400).json({
+        error: `shadow_item.riskLevel must be one of: ${RISK_LEVELS.join(", ")}`,
+      });
+    }
+
     const record: ShadowRecord = {
       id: shadow_item.id || `sh-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       sessionId: shadow_item.sessionId || engine_id,
@@ -124,7 +184,7 @@ pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (r
       proposedReply: shadow_item.proposedReply,
       timestamp: shadow_item.timestamp || new Date().toISOString(),
       confidenceScore: shadow_item.confidenceScore ?? 0.9,
-      riskLevel: shadow_item.riskLevel || "safe",
+      riskLevel,
       status: "pending", // always pending on ingest
       deterministicRuleApplied: shadow_item.deterministicRuleApplied ?? null,
       auditNote: shadow_item.auditNote ?? null,
@@ -133,11 +193,12 @@ pipelineRouter.post("/api/pipeline/ingest/shadow-trace", requireOperatorAuth, (r
 
     shadowDB.insert(record);
 
-    // Update in-memory live execution trace and record
-    if (Array.isArray(pipeline_traces) && pipeline_traces.length > 0) {
-      latestPipelineTrace = pipeline_traces;
-    }
-    latestPipelineRecord = record;
+    // Update in-memory live execution trace and record (newest wins)
+    publishLatest(
+      Array.isArray(pipeline_traces) && pipeline_traces.length > 0 ? pipeline_traces : null,
+      record,
+      Date.now()
+    );
 
     // Broadcast to all connected SSE clients including live trace
     shadowEventBus.emit("shadow-update", {
@@ -171,11 +232,11 @@ pipelineRouter.post("/api/pipeline/process", async (req: Request, res: Response)
       return res.status(400).json({ error: "Message text is required." });
     }
 
+    const startedAt = Date.now();
     const result = await processPipelineMessage(channel, senderId, senderDisplay, text, domainContext, environmentMode);
 
-    // Update in-memory live execution trace and record
-    latestPipelineTrace = result.trace;
-    latestPipelineRecord = result.record;
+    // Update in-memory live execution trace and record (newest wins)
+    publishLatest(result.trace, result.record, startedAt);
 
     // Broadcast the newly created record to SSE clients including live trace
     shadowEventBus.emit("shadow-update", {
