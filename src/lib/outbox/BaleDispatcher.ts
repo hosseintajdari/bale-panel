@@ -114,3 +114,7 @@ export function getBaleDispatcher(): BaleDispatcher | null {
   if (!_baleDispatcher) _baleDispatcher = new BaleDispatcher(token);
   return _baleDispatcher;
 }
+
+export function resetBaleDispatcher(): void {
+  _baleDispatcher = null;
+}

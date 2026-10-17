@@ -23,7 +23,7 @@
 - `GET /api/admin/keys`: فهرست کلیدهای فعال همراه با نقش و تاریخ استفاده (بدون افشای هش یا توکن).
 - `POST /api/admin/keys`: ایجاد کلید جدید با پیشوند `emb_<role>_<random_hex>` و بازگرداندن توکن متنی برای اولین و آخرین بار.
 - `DELETE /api/admin/keys/:id`: ابطال و حذف آنی کلید.
-- `POST /api/admin/bale/set-webhook`: ثبت مستقیم URL وب‌هوک بله روی API رسمی بات همراه با `secret_token`.
+- `POST /api/admin/bale/set-webhook`: ثبت وب‌هوک بله با استفاده از `BALE_WEBHOOK_SECRET` به عنوان منبع حقیقت واحد (fail-closed در صورت عدم تنظیم یا عدم تطابق secret).
 - `POST /api/evolution/inbound-message`: اندپوینت کامل شبیه‌سازی و دریافت وب‌هوک پیام‌های واتساپ با رعایت ۳ اصل ضد مسدودی (Strict Inbound، Persist-First در WorkLedger، تاخیر تصادفی انسانی).
 
 ### ۱.۴. هماهنگی فرانت‌اند و یکپارچه‌سازی با زبان طراحی استاندارد ۲۰۲۶ (Linear / Raycast)
