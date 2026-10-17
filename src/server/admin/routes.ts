@@ -2,7 +2,8 @@ import { Router } from "express";
 import { requireAdminAuth } from "../auth/index.js";
 import { telegramKeyboardDB, telegramWebAppDB } from "../../lib/db/database.js";
 import { getBaleDispatcher } from "../../lib/outbox/BaleDispatcher.js";
-import { BALE_WEBHOOK_SECRET } from "../config.js";
+import { secureEquals } from "../auth/index.js";
+import { getBaleWebhookSecret } from "../config.js";
 import { adminIntegrationState } from "./state.js";
 
 export const adminRouter = Router();
@@ -79,18 +80,38 @@ function isPublicHost(hostname: string): boolean {
 // POST Set Bale Webhook URL
 adminRouter.post("/api/admin/bale/set-webhook", async (req, res) => {
   try {
+    const configuredSecret = getBaleWebhookSecret();
+    if (!configuredSecret) {
+      console.warn("[ADMIN] Bale webhook registration rejected: BALE_WEBHOOK_SECRET is not configured.");
+      return res.status(400).json({ error: "BALE_WEBHOOK_SECRET is not configured." });
+    }
+
+    const { webhookUrl, url, secretToken, secret_token } = req.body || {};
+    const candidateUrl = typeof webhookUrl === "string" ? webhookUrl : (typeof url === "string" ? url : "");
+    if (!candidateUrl.trim()) {
+      return res.status(400).json({ error: "webhookUrl is required." });
+    }
+    const targetUrl = candidateUrl.trim();
+
+    const hasSuppliedSecret =
+      (secretToken !== undefined && secretToken !== null) ||
+      (secret_token !== undefined && secret_token !== null);
+
+    if (hasSuppliedSecret) {
+      const rawSecret = secretToken !== undefined && secretToken !== null ? secretToken : secret_token;
+      if (typeof rawSecret !== "string" || !secureEquals(rawSecret, configuredSecret)) {
+        console.warn("[ADMIN] Bale webhook registration rejected: secret token mismatch.");
+        return res.status(400).json({ error: "Secret token mismatch." });
+      }
+    }
+
     const bale = getBaleDispatcher();
     if (!bale) {
       return res.status(400).json({ error: "BALE_BOT_TOKEN is not configured." });
     }
-    const { webhookUrl, secretToken } = req.body || {};
-    if (!webhookUrl || typeof webhookUrl !== "string") {
-      return res.status(400).json({ error: "webhookUrl is required." });
-    }
-    const url = webhookUrl.trim();
     let parsed: URL;
     try {
-      parsed = new URL(url);
+      parsed = new URL(targetUrl);
     } catch {
       return res.status(400).json({ error: "webhookUrl must be a valid absolute URL." });
     }
@@ -100,20 +121,9 @@ adminRouter.post("/api/admin/bale/set-webhook", async (req, res) => {
     if (!isPublicHost(parsed.hostname)) {
       return res.status(400).json({ error: "webhookUrl must point to a public host." });
     }
-    // An explicitly empty secretToken is rejected; an absent one falls back to
-    // the configured env secret. Never silently clear the webhook secret (#73).
-    if (secretToken !== undefined && (typeof secretToken !== "string" || !secretToken.trim())) {
-      return res.status(400).json({ error: "secretToken must not be empty." });
-    }
-    const effectiveSecret =
-      typeof secretToken === "string" && secretToken.trim() ? secretToken.trim() : BALE_WEBHOOK_SECRET;
-    if (!effectiveSecret) {
-      return res.status(400).json({
-        error: "No webhook secret available: provide secretToken or configure BALE_WEBHOOK_SECRET.",
-      });
-    }
-    const success = await bale.setWebhook(url, effectiveSecret);
-    res.json({ success, webhookUrl: url });
+
+    const success = await bale.setWebhook(targetUrl, configuredSecret);
+    res.json({ success, webhookUrl: targetUrl });
   } catch (err: any) {
     console.error("Error in /api/admin/bale/set-webhook:", err);
     res.status(500).json({ error: err.message || "Failed to set webhook." });

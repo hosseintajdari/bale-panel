@@ -7,8 +7,9 @@ import { encryptSecret, decryptSecret, maskSecret, vaultCredentialsStore, getSaf
 import { authenticateToken, secureEquals, hashToken, createOperatorSession, sessionUser, operatorSessions } from "../src/server/auth/index.js";
 import { shadowDB, auditDB, apiKeyDB, telegramKeyboardDB, telegramWebAppDB } from "../src/lib/db/database.js";
 import { dispatchToOutbox } from "../src/server/outbox/index.js";
+import { getBaleDispatcher, resetBaleDispatcher } from "../src/lib/outbox/BaleDispatcher.js";
 import { processPipelineMessage } from "../src/server/pipeline/index.js";
-import { PANEL_API_SECRET, BALE_WEBHOOK_SECRET, EVOLUTION_WEBHOOK_SECRET } from "../src/server/config.js";
+import { PANEL_API_SECRET, BALE_WEBHOOK_SECRET, EVOLUTION_WEBHOOK_SECRET, getBaleWebhookSecret } from "../src/server/config.js";
 
 // Ensure mock outbox dispatcher is active during automated test runs
 process.env.MOCK_OUTBOX = "true";
@@ -520,6 +521,14 @@ test("Modular Backend Test Suite", async (t) => {
       body: {},
     });
     assert.equal(waEmptyRes.status, 403);
+
+    // 9.6 Bale Webhook Missing Header -> 403 Forbidden
+    const baleMissingHeader = await request(testServer, {
+      method: "POST",
+      path: "/webhook/bale",
+      body: { message: { text: "hello", chat: { id: 12345 } } },
+    });
+    assert.equal(baleMissingHeader.status, 403);
   });
 
   await t.test("10. HTTP Endpoints: Gateways Telemetry & Audit History", async () => {
@@ -1826,6 +1835,205 @@ test("Modular Backend Test Suite", async (t) => {
       assert.equal(stateRes.body.latestPipelineRecord?.id, autoIngestRes.body.id);
     } finally {
       sseReq.destroy();
+    }
+  });
+
+  await t.test("25. Bale Webhook Authentication & Registration Security Contract (#23)", async () => {
+    // Set up Bale dispatcher with a test token so provider calls can be intercepted
+    const prevBotToken = process.env.BALE_BOT_TOKEN;
+    process.env.BALE_BOT_TOKEN = "test-bale-bot-token-for-registration";
+    const bale = getBaleDispatcher();
+    assert.ok(bale, "bale dispatcher instance should be available");
+
+    let providerCalls = 0;
+    let lastUrl: string | undefined;
+    let lastSecret: string | undefined;
+
+    const originalSetWebhook = bale.setWebhook;
+    bale.setWebhook = async (url: string, secretToken?: string) => {
+      providerCalls++;
+      lastUrl = url;
+      lastSecret = secretToken;
+      return true;
+    };
+
+    try {
+      // 25.1 Registration with no configured secret: rejected; no provider call.
+      const savedSecret = process.env.BALE_WEBHOOK_SECRET;
+      try {
+        delete process.env.BALE_WEBHOOK_SECRET;
+        providerCalls = 0;
+        const regNoSecret = await request(testServer, {
+          method: "POST",
+          path: "/api/admin/bale/set-webhook",
+          headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+          body: { webhookUrl: "https://example.com/webhook/bale" },
+        });
+        assert.equal(regNoSecret.status, 400);
+        assert.equal(regNoSecret.body.error, "BALE_WEBHOOK_SECRET is not configured.");
+        assert.equal(providerCalls, 0, "Registration with no configured secret must not call provider");
+      } finally {
+        if (savedSecret !== undefined) {
+          process.env.BALE_WEBHOOK_SECRET = savedSecret;
+        }
+      }
+
+      // 25.2 Registration with a mismatched secret: rejected; no provider call.
+      providerCalls = 0;
+      const regMismatch = await request(testServer, {
+        method: "POST",
+        path: "/api/admin/bale/set-webhook",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+        body: {
+          webhookUrl: "https://example.com/webhook/bale",
+          secretToken: "wrong_client_secret_token",
+        },
+      });
+      assert.equal(regMismatch.status, 400);
+      assert.equal(regMismatch.body.error, "Secret token mismatch.");
+      assert.equal(providerCalls, 0, "Registration with mismatched secretToken must not call provider");
+
+      // Also verify snake_case secret_token mismatch
+      providerCalls = 0;
+      const regMismatchSnake = await request(testServer, {
+        method: "POST",
+        path: "/api/admin/bale/set-webhook",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+        body: {
+          webhookUrl: "https://example.com/webhook/bale",
+          secret_token: "wrong_client_secret_token",
+        },
+      });
+      assert.equal(regMismatchSnake.status, 400);
+      assert.equal(regMismatchSnake.body.error, "Secret token mismatch.");
+      assert.equal(providerCalls, 0, "Registration with mismatched secret_token must not call provider");
+
+      // 25.3 Registration with the configured secret: succeeds through a mocked provider.
+      const currentConfiguredSecret = getBaleWebhookSecret();
+      assert.ok(currentConfiguredSecret, "Configured secret must be non-empty");
+
+      providerCalls = 0;
+      lastUrl = undefined;
+      lastSecret = undefined;
+      const regSuccess = await request(testServer, {
+        method: "POST",
+        path: "/api/admin/bale/set-webhook",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+        body: {
+          webhookUrl: "https://example.com/webhook/bale",
+          secretToken: currentConfiguredSecret,
+        },
+      });
+      assert.equal(regSuccess.status, 200);
+      assert.equal(regSuccess.body.success, true);
+      assert.equal(regSuccess.body.webhookUrl, "https://example.com/webhook/bale");
+      assert.equal(providerCalls, 1, "Mocked provider must be called once on matching secret");
+      assert.equal(lastUrl, "https://example.com/webhook/bale");
+      assert.equal(lastSecret, currentConfiguredSecret, "Provider must be called with configured secret");
+
+      // Also verify registration with omitted secret uses the configured secret as source of truth
+      providerCalls = 0;
+      lastUrl = undefined;
+      lastSecret = undefined;
+      const regSuccessOmitted = await request(testServer, {
+        method: "POST",
+        path: "/api/admin/bale/set-webhook",
+        headers: { Authorization: `Bearer ${PANEL_API_SECRET}` },
+        body: {
+          webhookUrl: "https://example.com/webhook/bale",
+        },
+      });
+      assert.equal(regSuccessOmitted.status, 200);
+      assert.equal(regSuccessOmitted.body.success, true);
+      assert.equal(providerCalls, 1, "Mocked provider must be called when secret is omitted");
+      assert.equal(lastSecret, currentConfiguredSecret, "Provider must be called with configured secret");
+
+      // 25.4 Incoming webhook with absent configuration: rejected before pipeline processing.
+      const savedSecret2 = process.env.BALE_WEBHOOK_SECRET;
+      const initialAuditCount = auditDB.getAll().length;
+      const initialShadowCount = shadowDB.getAll().length;
+      try {
+        delete process.env.BALE_WEBHOOK_SECRET;
+        const inAbsentConfig = await request(testServer, {
+          method: "POST",
+          path: "/webhook/bale",
+          headers: { "x-telegram-bot-api-secret-token": "any_secret" },
+          body: {
+            message: {
+              chat: { id: 99991 },
+              text: "inbound message during absent config test",
+            },
+          },
+        });
+        assert.equal(inAbsentConfig.status, 403);
+        assert.equal(auditDB.getAll().length, initialAuditCount, "Audit log must not be written when secret is unconfigured");
+        assert.equal(shadowDB.getAll().length, initialShadowCount, "Pipeline shadow item must not be created when secret is unconfigured");
+      } finally {
+        if (savedSecret2 !== undefined) {
+          process.env.BALE_WEBHOOK_SECRET = savedSecret2;
+        }
+      }
+
+      // 25.5 Incoming webhook with missing header: rejected before pipeline processing.
+      const auditCountBeforeMissing = auditDB.getAll().length;
+      const shadowCountBeforeMissing = shadowDB.getAll().length;
+      const inMissingHeader = await request(testServer, {
+        method: "POST",
+        path: "/webhook/bale",
+        body: {
+          message: {
+            chat: { id: 99992 },
+            text: "inbound message missing header test",
+          },
+        },
+      });
+      assert.equal(inMissingHeader.status, 403);
+      assert.equal(auditDB.getAll().length, auditCountBeforeMissing, "Audit log must not be written when header is missing");
+      assert.equal(shadowDB.getAll().length, shadowCountBeforeMissing, "Pipeline shadow item must not be created when header is missing");
+
+      // 25.6 Incoming webhook with wrong header: rejected before pipeline processing.
+      const auditCountBeforeWrong = auditDB.getAll().length;
+      const shadowCountBeforeWrong = shadowDB.getAll().length;
+      const inWrongHeader = await request(testServer, {
+        method: "POST",
+        path: "/webhook/bale",
+        headers: { "x-telegram-bot-api-secret-token": "completely_wrong_secret" },
+        body: {
+          message: {
+            chat: { id: 99993 },
+            text: "inbound message wrong header test",
+          },
+        },
+      });
+      assert.equal(inWrongHeader.status, 403);
+      assert.equal(auditDB.getAll().length, auditCountBeforeWrong, "Audit log must not be written when header is wrong");
+      assert.equal(shadowDB.getAll().length, shadowCountBeforeWrong, "Pipeline shadow item must not be created when header is wrong");
+
+      // 25.7 Incoming webhook with correct configured secret: reaches the normal handler.
+      const auditCountBeforeValid = auditDB.getAll().length;
+      const inValid = await request(testServer, {
+        method: "POST",
+        path: "/webhook/bale",
+        headers: { "x-telegram-bot-api-secret-token": currentConfiguredSecret },
+        body: {
+          message: {
+            chat: { id: 99994 },
+            from: { first_name: "TestUser", last_name: "Verified" },
+            text: "سلام ربات تست احراز هویت وب‌هوک",
+          },
+        },
+      });
+      assert.equal(inValid.status, 200);
+      assert.equal(inValid.body.ok, true);
+      assert.ok(auditDB.getAll().length > auditCountBeforeValid, "Audit entry must be created when secret is valid");
+    } finally {
+      bale.setWebhook = originalSetWebhook;
+      if (prevBotToken !== undefined) {
+        process.env.BALE_BOT_TOKEN = prevBotToken;
+      } else {
+        delete process.env.BALE_BOT_TOKEN;
+        resetBaleDispatcher();
+      }
     }
   });
 });

@@ -14,9 +14,9 @@ The Bale webhook was **not secure by default**. Before remediation, an environme
 
 - **Evidence (sanitized):** Before the fix, `src/server/webhooks/routes.ts:58-71` guarded verification with `if (BALE_WEBHOOK_SECRET)`. A runtime probe with the variable absent received `200 {"ok":true}` and emitted the inbound processing log. No secret values were collected or printed.
 - **Impact:** Anyone able to reach `POST /webhook/bale` could forge updates, create audit/pipeline records, and trigger downstream processing.
-- **Remediation:** On branch `security/p0-bale-webhook-secret`, reject an unset secret with 403, preserve constant-time comparison, mark the variable required in `.env.example`, and document the deployment contract. PR and CI gates are required before merge.
+- **Remediation:** On branch `security/p0-bale-webhook-secret`, reject an unset secret with 403, align webhook registration (`POST /api/admin/bale/set-webhook`) to fail closed on unset or mismatched secret without calling provider API, preserve constant-time comparison, mark the variable required in `.env.example`, and document the deployment contract. PR and CI gates are required before merge.
 - **Rollback:** Revert the remediation commit/PR. Do not restore an unauthenticated endpoint without an approved architecture decision.
-- **Acceptance test:** Missing secret, missing header, and wrong header return 403; configured correct header returns 200; lint, test, build, control check, and CI pass.
+- **Acceptance test:** Missing secret, missing header, and wrong header return 403 on inbound webhook; configured correct header returns 200; registration with unset or mismatched secret returns 400 with no provider API call; registration with configured secret succeeds through mocked provider; lint, test, build, control check, and CI pass.
 - **Tracking:** GitHub issue #22.
 
 ### P0 — Unauthenticated bot routes and caller-controlled tenant/session identity require separate remediation

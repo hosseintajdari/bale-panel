@@ -120,3 +120,7 @@ export function getBaleDispatcher(): BaleDispatcher | null {
   }
   return _baleDispatcher;
 }
+
+export function resetBaleDispatcher(): void {
+  _baleDispatcher = null;
+}

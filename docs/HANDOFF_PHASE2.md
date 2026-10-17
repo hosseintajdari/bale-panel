@@ -37,7 +37,7 @@
 
 ### ۵. Bale Webhook Endpoint (`POST /webhook/bale`)
 - دریافت پیام‌های واقعی از Bale Bot API
-- تایید با `BALE_WEBHOOK_SECRET` (اختیاری اما پیشنهادی)
+- تایید با `BALE_WEBHOOK_SECRET` (اجباری و fail-closed: در صورت عدم تنظیم یا عدم تطابق، درخواست با 403 رد می‌شود)
 - ثبت در `audit_logs` و پاس دادن به `processPipelineMessage`
 - Immediate acknowledgment (200 OK) قبل از processing
 
@@ -50,7 +50,7 @@
 
 ```
 BALE_BOT_TOKEN=""          # از BotFather بله — REQUIRED برای dispatch واقعی
-BALE_WEBHOOK_SECRET=""     # برای امنیت webhook — OPTIONAL
+BALE_WEBHOOK_SECRET=""     # توکن تایید webhook — REQUIRED (fail-closed)
 TELEGRAM_BOT_TOKEN=""      # از BotFather تلگرام
 EVOLUTION_API_URL=""       # آدرس Evolution API v2 (self-hosted)
 EVOLUTION_API_KEY=""       # کلید API Evolution
