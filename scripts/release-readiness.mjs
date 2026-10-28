@@ -98,19 +98,25 @@ if (!runtimeEvidenceVerified) {
 }
 
 const head = git("rev-parse", "HEAD");
+const workingTreeClean = git("status", "--porcelain") === "";
 let rollbackCommit = null;
+let rollbackCommand = null;
 try {
-  rollbackCommit = git("rev-parse", "HEAD^");
+  const parents = git("rev-list", "--parents", "-n", "1", head).split(" ").slice(1);
+  rollbackCommit = parents[0] ?? null;
+  rollbackCommand = parents.length > 1
+    ? `git revert --no-edit -m 1 ${head}`
+    : `git revert --no-edit ${head}`;
 } catch {
   // A shallow clone may not contain a parent commit. Report it as unavailable, not a script crash.
 }
 const codeReady = checks.every((check) => check.passed) && secretScan.passed;
-const releaseReady = codeReady && runtimeBlockers.length === 0;
+const releaseReady = codeReady && runtimeBlockers.length === 0 && workingTreeClean;
 const report = {
   generatedAt: new Date().toISOString(),
   mode,
   status: releaseReady ? "READY" : codeReady ? "RUNTIME_EVIDENCE_REQUIRED" : "BLOCKED",
-  git: { branch: git("branch", "--show-current"), head, clean: git("status", "--porcelain") === "" },
+  git: { branch: git("branch", "--show-current"), head, clean: workingTreeClean },
   checks,
   secretScan,
   webhookPolicy: {
@@ -121,9 +127,9 @@ const report = {
   runtimeEvidenceVerified,
   runtimeEvidenceFile: process.env.RELEASE_RUNTIME_EVIDENCE_FILE ?? null,
   runtimeEvidenceCheck: runtimeEvidence.ok ? "passed" : runtimeEvidence.reason,
-  blockers: [...(codeReady ? [] : ["one or more code-quality gates failed or a tracked-secret risk was found"]), ...runtimeBlockers],
+  blockers: [...(codeReady ? [] : ["one or more code-quality gates failed or a tracked-secret risk was found"]), ...(workingTreeClean ? [] : ["working tree is not clean; release evidence must be tied to committed content"]), ...runtimeBlockers],
   rollback: rollbackCommit
-    ? { targetCommit: rollbackCommit, command: `git revert --no-edit ${head}` }
+    ? { targetCommit: rollbackCommit, command: rollbackCommand }
     : { targetCommit: null, command: null, note: "Parent commit is unavailable in this clone; fetch history before rollback." },
   codeReady,
   releaseReady,
