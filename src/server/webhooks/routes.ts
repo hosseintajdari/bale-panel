@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { auditDB } from "../../lib/db/database.js";
 import { secureEquals } from "../auth/index.js";
-import { BALE_BOT_TOKEN, BALE_WEBHOOK_SECRET, EVOLUTION_WEBHOOK_SECRET } from "../config.js";
+import { BALE_BOT_TOKEN, EVOLUTION_WEBHOOK_SECRET, getBaleWebhookSecret } from "../config.js";
 import { processPipelineMessage, shadowEventBus } from "../pipeline/index.js";
 
 export const webhookRouter = Router();
@@ -56,8 +56,9 @@ webhookRouter.post("/webhook/evolution", async (req, res) => {
 
 // BALE WEBHOOK ENDPOINT — Receives real messages from Bale Bot API
 webhookRouter.post("/webhook/bale", async (req, res) => {
+  const configuredSecret = getBaleWebhookSecret();
   // Fail closed: an unset deployment secret must never expose the ingestion pipeline.
-  if (!BALE_WEBHOOK_SECRET) {
+  if (!configuredSecret) {
     console.error("[BALE WEBHOOK] BALE_WEBHOOK_SECRET is not configured; request rejected.");
     return res.status(403).json({ error: "Forbidden" });
   }
@@ -65,7 +66,7 @@ webhookRouter.post("/webhook/bale", async (req, res) => {
   const incomingSecret = typeof req.headers["x-telegram-bot-api-secret-token"] === "string"
     ? req.headers["x-telegram-bot-api-secret-token"]
     : "";
-  if (!secureEquals(incomingSecret, BALE_WEBHOOK_SECRET)) {
+  if (!secureEquals(incomingSecret, configuredSecret)) {
     console.warn("[BALE WEBHOOK] Secret token mismatch — request rejected.");
     return res.status(403).json({ error: "Forbidden" });
   }
