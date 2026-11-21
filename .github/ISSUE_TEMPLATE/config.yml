@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerabilities / گزارش آسیب‌پذیری امنیتی
+    url: https://github.com/hosseintajdari/bale-panel/security/advisories/new
+    about: bale-panelrt a security issue privately / گزارش خصوصی مسائل امنیتی
